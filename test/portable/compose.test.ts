@@ -1,7 +1,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 import { compose } from '../../src/compose.ts'
-import { EMPTY_PARAMS } from '../../src/trie.ts'
+import { EMPTY_PARAMS } from '../../src/context-defaults.ts'
 import type { Context, HttpFilter, HttpHandler } from '../../src/types.ts'
 import { PROPERTY_OPTIONS } from './arbitraries.ts'
 

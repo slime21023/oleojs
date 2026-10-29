@@ -71,6 +71,8 @@ src/
   fetch.ts                  # toFetch, the executionCtx stub
   compose.ts                # compose
   context-key.ts            # contextKey
+  context-defaults.ts       # shared EMPTY_PARAMS and executionCtx stub
+  http-method.ts            # method validation and Fetch-forbidden methods
   <module>.ts               # core modules (kebab-case)
   node/
     index.ts                # `oleo.js/node` entry
@@ -235,7 +237,7 @@ export default toFetch(app)
 - **Passing data downstream:** use [context keys](#context-keys). A filter may also pass a new request (`next(new Request(req, init), ctx)`).
 - **Data only.** A context holds plain fields plus the symbol-keyed entries written by context keys.
 - **`ExecutionContext`** is an oleo.js interface modeled on Cloudflare's. The core only passes it through or substitutes a stub. It never reads a platform global to obtain one.
-- **The `executionCtx` stub** (`STUB_EXECUTION_CTX` in `src/fetch.ts`) is used on runtimes without `waitUntil` and by the Node adapter.
+- **The `executionCtx` stub** (`STUB_EXECUTION_CTX` in `src/context-defaults.ts`) is used on runtimes without `waitUntil` and by the Node adapter.
   - It reports a rejection with `console.error`, so the promise never becomes an unhandled rejection and the failure is not silently lost.
   - It does not extend the request lifetime.
 
@@ -681,7 +683,7 @@ createServer(toNodeListener(toFetch(app), { env })).listen(3000)
 - **Body:** `null` for `GET` and `HEAD`. Otherwise `Readable.toWeb(req)` with `duplex: 'half'`.
 - **Abort:** an `AbortController` aborts when the connection closes before the response finishes. Its `signal` is passed to the `Request`.
 - **Construction failures:** the adapter responds directly, without calling `app.fetch`.
-  - **`501 Not Implemented`:** a method Fetch forbids (`CONNECT`, `TRACE`, `TRACK`). This is checked before construction, with the list shared with `router.ts`.
+  - **`501 Not Implemented`:** a method Fetch forbids (`CONNECT`, `TRACE`, `TRACK`). This is checked before construction, with the list shared through `src/http-method.ts`.
   - **`400 Bad Request`:** an invalid host, or any other `new Request()` failure (an unsupported request target, an invalid header value).
 - **Context:** `env` comes from `options.env`, and `executionCtx` is the stub.
 

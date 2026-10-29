@@ -1,11 +1,10 @@
+import { EMPTY_PARAMS } from './context-defaults.ts'
 import type { Params } from './types.ts'
 
 const CHAR_SLASH = 47
 const EMPTY_SEGMENT = -1
 const SYNTAX_CHARS = /[(){}?+\\]/
 const PARAM_NAME = /^[\p{ID_Start}$_][\p{ID_Continue}$‌‍]*$/u
-
-export const EMPTY_PARAMS: Params = Object.freeze({})
 
 // Returned by `match` when the selected route's parameters are not valid percent-encoding.
 export const MALFORMED: unique symbol = Symbol('malformed')

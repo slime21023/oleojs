@@ -2,8 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Http2ServerRequest, Http2ServerResponse } from 'node:http2'
 import { Readable, pipeline } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
-import { STUB_EXECUTION_CTX } from '../fetch.ts'
-import { FORBIDDEN_METHODS } from '../router.ts'
+import { STUB_EXECUTION_CTX } from '../context-defaults.ts'
+import { FORBIDDEN_METHODS } from '../http-method.ts'
 import type { FetchHandler } from '../types.ts'
 
 export interface NodeListenerOptions<E = unknown> {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { del, get, head, options, patch, post, put, route, router } from '../../src/router.ts'
-import { EMPTY_PARAMS } from '../../src/trie.ts'
+import { EMPTY_PARAMS } from '../../src/context-defaults.ts'
 import type { Context, HttpHandler } from '../../src/types.ts'
 
 const ctx: Context = { params: EMPTY_PARAMS, env: undefined, executionCtx: { waitUntil() {} } }

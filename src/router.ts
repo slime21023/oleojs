@@ -1,6 +1,8 @@
 import { compose } from './compose.ts'
+import { EMPTY_PARAMS } from './context-defaults.ts'
+import { checkMethod } from './http-method.ts'
 import { pathEnd, pathStart } from './path.ts'
-import { EMPTY_PARAMS, MALFORMED, Trie } from './trie.ts'
+import { MALFORMED, Trie } from './trie.ts'
 import type { HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from './types.ts'
 
 // Type-level only: never set at run time.
@@ -32,26 +34,6 @@ export interface GroupOptions<E = unknown> {
 }
 
 type Item<E, TBase extends Params> = Route<E, TBase> | RouteGroup<E, TBase>
-
-const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
-// Fetch upper-cases these methods, so any other casing can never match.
-const NORMALIZED_METHODS = new Set(['DELETE', 'GET', 'HEAD', 'OPTIONS', 'POST', 'PUT'])
-// Fetch refuses to construct requests with these methods (in any casing).
-export const FORBIDDEN_METHODS: ReadonlySet<string> = new Set(['CONNECT', 'TRACE', 'TRACK'])
-
-function checkMethod(method: string, pattern: string): void {
-  const description = `Invalid route method "${method}" for "${pattern}"`
-  if (!TOKEN.test(method)) {
-    throw new TypeError(`${description}: is not a valid HTTP method`)
-  }
-  const normalized = method.toUpperCase()
-  if (FORBIDDEN_METHODS.has(normalized)) {
-    throw new TypeError(`${description}: is forbidden by Fetch and can never match`)
-  }
-  if (NORMALIZED_METHODS.has(normalized) && method !== normalized) {
-    throw new TypeError(`${description}: can never match; Fetch normalizes it to "${normalized}"`)
-  }
-}
 
 function kindOf(value: unknown): 'route' | 'group' | undefined {
   return typeof value === 'object' && value !== null ? (value as { [KIND]?: 'route' | 'group' })[KIND] : undefined

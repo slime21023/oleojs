@@ -1,13 +1,5 @@
-import { EMPTY_PARAMS } from './trie.ts'
-import type { ExecutionContext, FetchHandler, HttpHandler } from './types.ts'
-
-// Used where the runtime provides no `waitUntil`. It only keeps rejections from going
-// unhandled; it does not extend the request lifetime.
-export const STUB_EXECUTION_CTX: ExecutionContext = Object.freeze({
-  waitUntil(promise: Promise<unknown>) {
-    promise.then(undefined, (error: unknown) => console.error(error))
-  },
-})
+import { EMPTY_PARAMS, STUB_EXECUTION_CTX } from './context-defaults.ts'
+import type { FetchHandler, HttpHandler } from './types.ts'
 
 export function toFetch<E>(handler: HttpHandler<E>): FetchHandler<E> {
   return {

@@ -4,7 +4,7 @@ import { compose } from '../../src/compose.ts'
 import { contextKey } from '../../src/context-key.ts'
 import { toFetch } from '../../src/fetch.ts'
 import { get, router } from '../../src/router.ts'
-import { EMPTY_PARAMS } from '../../src/trie.ts'
+import { EMPTY_PARAMS } from '../../src/context-defaults.ts'
 import type { Context, HttpFilter } from '../../src/types.ts'
 import { PROPERTY_OPTIONS } from './arbitraries.ts'
 

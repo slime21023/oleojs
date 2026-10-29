@@ -3,7 +3,7 @@ import { connect as http2Connect, createServer as createHttp2Server } from 'node
 import type { AddressInfo, Server } from 'node:net'
 import { connect as netConnect } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { STUB_EXECUTION_CTX } from '../../src/fetch.ts'
+import { STUB_EXECUTION_CTX } from '../../src/context-defaults.ts'
 import type { ExecutionContext, FetchHandler } from '../../src/types.ts'
 import { type NodeListener, type NodeListenerOptions, toNodeListener } from '../../src/node/listener.ts'
 
