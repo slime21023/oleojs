@@ -17,7 +17,7 @@ The Phase 1 specification is complete, and the project skeleton described in [De
 - The differential `URLPattern` tests (`src/urlpattern.test.ts`).
 - The Node adapter `oleo.js/node` (`src/node/listener.ts`).
 
-**Phase 1 is complete.** Before starting Phase 2, its APIs must be decided (see [Open decisions](#open-decisions)). Items listed under [Open decisions](#open-decisions) are not settled — ask before implementing them.
+**Phase 1 is complete.** Phase 2 is designed (see [Route groups](#route-groups-phase-2)) and is the next step. Items listed under [Open decisions](#open-decisions) are not settled — ask before implementing them.
 
 ## Hard rules
 
@@ -34,6 +34,7 @@ The Phase 1 specification is complete, and the project skeleton described in [De
 | Export | Tier | Contents | Phase |
 | --- | --- | --- | --- |
 | `oleo.js` | Portable | Router, route helpers, core types, `compose`, context keys, `toFetch` | 1 |
+| `oleo.js` | Portable | `group` | 2 |
 | `oleo.js/node` | Adapter | `node:http` / `node:http2` bridge | 1 |
 | `oleo.js/filters` | Portable | Standard filters (CORS, Bearer auth, RFC 9457 errors, request logging) | 3 |
 | `oleo.js/contract` | Portable | Declarative contracts, OpenAPI 3.1 generation | 4 |
@@ -248,6 +249,109 @@ get('/me', (req, ctx) => Response.json(userKey.get(ctx)))
 - **`get` vs `find`:** use `get` for values that a filter guarantees, and `find` for optional ones.
 - **No compile-time presence check.** A missing filter surfaces as a `TypeError` naming the key at run time. This is an accepted trade-off.
 - **Packages export their keys.** A package that sets a value exports its key alongside the filter (for example, `oleo.js/filters` exports `bearerAuth` together with its key).
+
+## Route groups (Phase 2)
+
+*Status: designed and verified by a type-level probe; not implemented yet.*
+
+A group joins a prefix onto its routes when `router()` is called and flattens them into the same trie as every other route. At run time a grouped route is indistinguishable from writing its full pattern directly. There is no run-time mounting and no hidden path state in `Context`.
+
+### API
+
+```ts
+interface GroupOptions<E = unknown> {
+  readonly filters?: readonly HttpFilter<E>[]
+}
+
+function group<E, TPrefix extends string, TBase extends Params = {}>(
+  prefix: TPrefix,
+  ...items: Array<Route<E, JoinParams<TBase, ParamsOf<TPrefix>>> | RouteGroup<E, JoinParams<TBase, ParamsOf<TPrefix>>>>
+): RouteGroup<E, TBase>
+function group<E, TPrefix extends string, TBase extends Params = {}>(
+  prefix: TPrefix,
+  options: GroupOptions<E>,
+  ...items: Array<Route<E, JoinParams<TBase, ParamsOf<TPrefix>>> | RouteGroup<E, JoinParams<TBase, ParamsOf<TPrefix>>>>
+): RouteGroup<E, TBase>
+```
+
+```ts
+const app = router(
+  get('/health', health),
+  group('/admin/:tenant', { filters: [requireAdmin, audit] },
+    get('/users', listUsers),              // GET /admin/:tenant/users
+    group('/users/:id',
+      get('', showUser),                   // GET /admin/:tenant/users/:id
+      del('', deleteUser),                 // DELETE /admin/:tenant/users/:id
+      get('/posts/:postId', showPost),     // ctx.params: { tenant, id, postId }
+    ),
+  ),
+)
+```
+
+### Flattening
+
+- **Patterns are concatenated, nothing more.** A route's full pattern is `prefix + pattern`, outermost group first.
+- **Validity is judged on the full pattern.** Every [route definition error](#route-definition-errors) applies to it, which yields the prefix rules for free:
+  - a prefix must start with `/`;
+  - a prefix ending in `/` produces an empty segment;
+  - a prefix containing `*` puts `*` before the last segment;
+  - a prefix parameter repeated in a route is a duplicate parameter.
+- **`''` addresses the prefix itself.** Inside a group, `get('', h)` matches the prefix exactly, and `get('/', h)` matches it with a trailing slash. At top level `''` is invalid because it does not start with `/`.
+- **One trie for everything.** Duplicate detection, priority, and `405` `Allow` lists cover grouped and ungrouped routes together. For example, `get('/admin/:tenant/users')` beside the group above is a duplicate route.
+- **`group()` never throws.** It only builds a frozen value. All errors surface when `router()` is called (Hard rule 6).
+- **Runtime discrimination:** route helpers and `group()` tag their values internally. A second argument to `group()` that is not such a value is the options object.
+
+### Group filters
+
+- **Composition:** `options.filters` compose like `compose(...filters)`, so the first filter is outermost. When `router()` is called, the composed filter wraps every route handler in the group, including routes of nested groups. An outer group's filters wrap an inner group's.
+- **Request order:** filters around the router → router → outer group filters → inner group filters → route-level filters → handler.
+- **Group filters see route parameters**, because they run after routing, on the derived context.
+- **Filters are applied once per route, not once per group.** The `(next) => …` closure runs once for each route in the group. Keep state that must be shared across the group (rate-limit counters, caches) outside that closure.
+- **Unmatched paths skip group filters.** A path under a group's prefix that matches no route gets the router's plain 404 or 405, without running the group's filters. For example, `/admin/x/nope` returns 404, not 401. This is an accepted trade-off of flattening.
+
+### Types
+
+```ts
+type JoinParams<A extends Params, B extends Params> = { readonly [K in (keyof A | keyof B) & string]: string }
+
+interface Route<E = unknown, TBase extends Params = {}> { /* … */ readonly [BASE]?: (base: TBase) => void }
+interface RouteGroup<E = unknown, TBase extends Params = {}> { /* … */ readonly [BASE]?: (base: TBase) => void }
+
+function get<E = unknown, TPattern extends string = string, TBase extends Params = {}>(
+  pattern: TPattern,
+  handler: HttpHandler<E, JoinParams<NoInfer<TBase>, ParamsOf<TPattern>>>,
+): Route<E, TBase>                                       // likewise post, put, …, route
+
+function router<E = unknown>(...items: Array<Route<E> | RouteGroup<E>>): HttpHandler<E>
+```
+
+- **`TBase`** is the set of prefix parameters a route or group expects from the groups that enclose it. A phantom, contravariant `BASE` member carries it. A route expecting nothing fits anywhere, and `router()` accepts only items expecting nothing.
+- **Three findings from the probe. Do not undo them:**
+  - **`JoinParams` must not be a conditional type.** A conditional collapses a still-unresolved `TBase` to `Params` during inference.
+  - **The route helpers must wrap `TBase` in `NoInfer`.** Otherwise `TBase` is inferred backwards from the handler and degrades to `Params`.
+  - **The `FILTER_ENV` phantom on `HttpFilter` is required** for `options.filters` to be env-checked.
+- **Inline routes:**
+  - prefix parameters flow into the routes;
+  - nested groups accumulate them;
+  - the options form keeps inference;
+  - `E` flows from `router<E>()`;
+  - an `options.filters` entry requiring a different env is a compile error.
+- **Routes defined in another module:** export a function or constant whose type is annotated as `RouteGroup` or `RouteGroup<Env>`. The annotation supplies the context that inference needs:
+
+  ```ts
+  // users.ts
+  export const userRoutes = (): RouteGroup<Env> =>
+    group('/users/:userId', get('/posts/:postId', (req, ctx) => Response.json(ctx.params)))
+  // app.ts
+  router<Env>(userRoutes())
+  ```
+
+  - **Without the annotation,** prefix parameters are missing from `ctx.params`, so using one is a compile error. It is never an untyped value.
+  - **Env mismatch:** an annotated `RouteGroup<Env>` put into a `router` of a different env is a compile error.
+- **Contract:** when implementing, add these cases to `src/inference.test-d.ts`:
+  - each inline behavior above;
+  - the annotated and the unannotated module patterns;
+  - every rejection.
 
 ## Request lifecycle
 
@@ -503,7 +607,7 @@ These are not part of the core. Compose them as filters or separate packages ins
 
 ## Open decisions
 
-None for Phase 1. APIs for Phase 2 and later are undecided, including the prefix-mounting function and the option shapes of the standard filters. Ask before implementing them.
+None for Phases 1 and 2. APIs for Phase 3 and later are undecided, including the option shapes of the standard filters. Ask before implementing them.
 
 ## Roadmap
 
@@ -513,6 +617,6 @@ None for Phase 1. APIs for Phase 2 and later are undecided, including the prefix
    3. `toFetch`, `compose`, and `contextKey`. *(done)*
    4. Differential `URLPattern` tests. *(done)*
    5. `oleo.js/node`. *(done)*
-2. **Sub-routing:** mount a router under a prefix with scoped filters. Parent and child params are merged.
+2. **Route groups:** `group(prefix, options?, ...items)`, flattened into the router's trie, with scoped filters and merged prefix parameters. See [Route groups](#route-groups-phase-2).
 3. **`oleo.js/filters`:** tree-shakeable standard filters (CORS, Bearer auth, RFC 9457 Problem Details, structured request logging).
 4. **`oleo.js/contract`:** an http4k-contract–style declarative layer that generates OpenAPI 3.1.
