@@ -1,4 +1,4 @@
-// Type inference contract for the public API (AGENTS.md, Building an application).
+// Type inference contract for the public API (docs/project-reference.md, Building an application).
 // Never weaken or delete a case to make it pass.
 import { describe, expectTypeOf, it } from 'vitest'
 import { compose } from '../../src/compose.ts'

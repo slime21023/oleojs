@@ -11,7 +11,7 @@
         "patterns": [
           {
             "group": ["node:*", "bun", "bun:*", "cloudflare:*"],
-            "message": "Portable code may use only ECMA-262 and ECMA-429 APIs (AGENTS.md, Standards conformance)."
+            "message": "Portable code may use only ECMA-262 and ECMA-429 APIs (docs/project-reference.md, Standards conformance)."
           }
         ]
       }
