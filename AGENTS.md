@@ -17,7 +17,7 @@ The Phase 1 specification is complete, and the project skeleton described in [De
 - The Node adapter `oleo.js/node` (`src/node/listener.ts`).
 - Route groups: `group` (`src/router.ts`).
 
-**Phases 1 and 2 are complete.** Phase 3 (`oleo.js/filters`) needs its APIs decided first. Items listed under [Open decisions](#open-decisions) are not settled — ask before implementing them.
+**Phases 1 and 2 are complete.** Phase 3 is designed (see [Standard filters](#standard-filters-phase-3)) and is the next step. Items listed under [Open decisions](#open-decisions) are not settled — ask before implementing them.
 
 ## Hard rules
 
@@ -250,7 +250,9 @@ get('/me', (req, ctx) => Response.json(userKey.get(ctx)))
 - **Storage:** each key owns a unique `Symbol(name)`, and `with` returns `{ ...ctx, [symbol]: value }`. Object spread copies symbol-keyed properties, so values survive later derivations, including the router's.
 - **`get` vs `find`:** use `get` for values that a filter guarantees, and `find` for optional ones.
 - **No compile-time presence check.** A missing filter surfaces as a `TypeError` naming the key at run time. This is an accepted trade-off.
-- **Packages export their keys.** A package that sets a value exports its key alongside the filter (for example, `oleo.js/filters` exports `bearerAuth` together with its key).
+- **Who owns the key:**
+  - **A filter that sets a value of a fixed type** exports its key.
+  - **A filter that sets a value whose type the user chooses** takes the key as an option instead, so the user creates it with the right `T` (for example, `bearerAuth({ verify, key: userKey })`). A key exported by the package could only be `ContextKey<unknown>`.
 
 ## Route groups (Phase 2)
 
@@ -355,6 +357,157 @@ function router<E = unknown>(...items: Array<Route<E> | RouteGroup<E>>): HttpHan
   - separately declared handlers;
   - the annotated and the unannotated module patterns;
   - every rejection.
+
+## Standard filters (Phase 3)
+
+*Status: designed; not implemented yet.*
+
+### Common rules
+
+- **Location:** `src/filters/`, published as `oleo.js/filters`. The `exports` map gains `./filters` → `dist/filters/index.js`. These are portable packages: ECMA-262 and ECMA-429 only, with the same lint and type isolation as the core.
+- **Factories:** every filter is a factory (`cors(options)`, `bearerAuth(options)`, `problemDetails(options?)`, `requestLogger(options?)`) that returns an `HttpFilter`.
+- **Fail fast:** a factory validates its options and throws a `TypeError` immediately, never at request time.
+- **Tree-shaking:** named exports from one entry, and the package declares `sideEffects: false`. Unused filters drop out of bundles.
+- **Never mutate a `Response`** (Hard rule 3). To add headers, build `new Response(res.body, { status, statusText, headers })` with a copied `Headers`. Responses from `fetch()` have immutable headers, so in-place mutation would also throw.
+- **Recommended order** around a router:
+
+  ```ts
+  compose(requestLogger(), cors({ origin }), problemDetails())(router(/* … bearerAuth per group or route … */))
+  ```
+
+  - **`requestLogger` outermost** sees the final status.
+  - **`cors` outside `problemDetails`** also adds its headers to problem responses.
+  - **`problemDetails` inside both** converts errors before they are logged.
+
+### `cors(options)`
+
+```ts
+interface CorsOptions {
+  origin: '*' | string | readonly string[] | ((origin: string, req: Request) => boolean) // required
+  methods?: readonly string[]       // default ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE']
+  allowHeaders?: readonly string[]  // default: reflect Access-Control-Request-Headers
+  exposeHeaders?: readonly string[] // default: none
+  credentials?: boolean             // default false
+  maxAge?: number                   // seconds; default: header omitted
+}
+```
+
+- **`origin` is required.** There is no default; allowing every origin must be written as `origin: '*'`.
+- **Option validation:**
+  - Each listed origin must be a serialized origin: `new URL(o).origin === o`, so `https://app.example.com/` with a trailing slash throws.
+  - `credentials: true` with `origin: '*'` throws, because browsers reject that combination.
+  - `maxAge` must be a non-negative integer.
+- **Requests without an `Origin` header** are not CORS requests and pass through untouched.
+- **A disallowed origin** passes through with no CORS processing at all; the browser then blocks it.
+- **Preflight** is an `OPTIONS` request with both `Origin` and `Access-Control-Request-Method`. An allowed preflight is answered with `204` and never reaches `next`. The response carries:
+  - `Access-Control-Allow-Origin`;
+  - `Access-Control-Allow-Methods`;
+  - `Access-Control-Allow-Headers`, which is the configured list or the reflected request headers, omitted when empty;
+  - `Access-Control-Allow-Credentials: true` when `credentials` is set;
+  - `Access-Control-Max-Age` when `maxAge` is set;
+  - `Vary`.
+- **Other allowed requests** call `next`, then add the following to the response:
+  - `Access-Control-Allow-Origin`;
+  - `Access-Control-Allow-Credentials` when `credentials` is set;
+  - `Access-Control-Expose-Headers` when configured;
+  - `Vary: Origin`.
+- **`Access-Control-Allow-Origin` value:** `*` when the configured origin is `'*'`; otherwise the request's own `Origin`, echoed. Echoing requires `Vary: Origin`, plus `Access-Control-Request-Headers` when headers are reflected. `Vary` values are appended to any existing `Vary`, never replacing it.
+- **Must wrap the whole router, never a group.** An `OPTIONS` preflight to a path without an `OPTIONS` route is an unmatched request, so group filters never see it (see [Group filters](#group-filters)).
+
+### `bearerAuth(options)`
+
+```ts
+interface BearerAuthOptions<E = unknown, T = unknown> {
+  verify: (token: string, req: Request, ctx: Context<E>) => T | undefined | Promise<T | undefined>
+  key?: ContextKey<T>  // where to store the verified principal; omit to only verify
+  realm?: string
+}
+
+function bearerAuth<E = unknown, T = unknown>(options: BearerAuthOptions<E, T>): HttpFilter<E>
+```
+
+```ts
+const userKey = contextKey<User>('user')
+group('/api', { filters: [bearerAuth({ verify: (token, req, ctx: Context<Env>) => findUser(ctx.env, token), key: userKey })] },
+  get('/me', (req, ctx) => Response.json(userKey.get(ctx))),
+)
+```
+
+- **Responses** follow RFC 6750, with empty bodies so that `problemDetails` can render them:
+
+  | Situation | Status | `WWW-Authenticate` |
+  | --- | --- | --- |
+  | No `Authorization` header, or a scheme other than `Bearer` (matched case-insensitively) | 401 | `Bearer realm="…"` (`realm` only if configured) |
+  | `Bearer` with an empty token or one outside the RFC 6750 `b64token` syntax | 400 | `Bearer realm="…", error="invalid_request"` |
+  | `verify` returns `undefined` | 401 | `Bearer realm="…", error="invalid_token"` |
+
+- **On success** it calls `next(req, key ? key.with(ctx, principal) : ctx)`. `verify` returns `undefined` to reject; any other value, including `null` or `false`, is the principal.
+- **`verify` may throw.** The error propagates to the error filter; it is never turned into a 401.
+- **The token is never logged or exposed.** Timing-safe comparison is the job of `verify`.
+- **`realm` validation:** it must be a valid quoted-string body, so `"`, `\`, and control characters throw.
+- **Env typing:** `E` cannot be inferred from `verify`'s parameters. Annotate `ctx: Context<Env>` in `verify`, or rely on contextual typing (for example, inside `router<Env>(group(…, { filters: [bearerAuth(…)] }))`). The type tests must cover both.
+- **Placement:** per group or route is fine. Unmatched paths under the group then get 404, not 401 (see [Group filters](#group-filters)).
+
+### `problemDetails(options?)`
+
+```ts
+interface Problem {
+  readonly status: number            // 400–599
+  readonly type?: string             // default 'about:blank'
+  readonly title?: string            // default: the status's standard reason phrase
+  readonly detail?: string
+  readonly instance?: string
+  readonly [extension: string]: unknown
+}
+
+interface ProblemDetailsOptions {
+  fromError?: (error: unknown, req: Request) => Problem | undefined // undefined → default 500
+  emptyResponses?: boolean                                        // default true
+  onError?: (error: unknown, req: Request) => void                // default: console.error(error)
+}
+```
+
+- **Thrown errors:** `next` is awaited inside `try`/`catch`. A thrown value becomes `fromError?.(error, req)`, or the default `{ status: 500 }` when that returns `undefined`.
+  - **Rendered as** `application/problem+json`.
+  - **No leaks:** the default problem never includes `error.message` or a stack.
+  - **Reporting:** `onError` runs for every error that ends up as a 5xx.
+  - **Invalid mappings:** if `fromError` throws or returns a status outside 400–599, the result is the default 500 and `onError` receives the original error.
+- **Empty error responses** (`emptyResponses: true`): a response with status ≥ 400 and a `null` body becomes a problem document with the same status, keeping every original header (`Allow`, `WWW-Authenticate`, CORS headers, …) and adding `Content-Type`.
+  - This covers the router's default 404/405/400 and `bearerAuth`'s 401/400.
+  - A response with any body, even an empty string, is left alone. Handlers that return their own error bodies are never rewritten.
+- **`HEAD` requests never get a body.** For a `HEAD` request the status and headers are converted, and the body stays `null`. The router strips bodies from `HEAD` responses, so without this rule every `HEAD` 404 would gain a body.
+- **Reason phrases:** ECMA-429 has no table of reason phrases, so `src/filters/` ships its own for 400–511. For an unknown status, `title` is omitted.
+- **Out of scope:** an error raised while a body is already streaming cannot be converted, because the headers are already sent.
+- **No error class.** The package exports no throwable `HttpProblem`, since that would be a response builder in disguise (see [Non-goals](#non-goals)). Map your own error types with `fromError`.
+
+### `requestLogger(options?)`
+
+```ts
+interface LogEntry {
+  readonly method: string
+  readonly path: string        // raw path without the query string, which often carries tokens
+  readonly status?: number     // absent when the handler threw
+  readonly durationMs: number  // rounded to 0.1 ms
+  readonly error?: true
+  readonly [field: string]: unknown
+}
+
+interface RequestLoggerOptions {
+  log?: (entry: LogEntry) => void                                                // default: console.log(JSON.stringify(entry))
+  fields?: (req: Request, res: Response | undefined) => Record<string, unknown> // extra fields; res is undefined on error
+}
+```
+
+- **One entry per request,** logged when `next` settles. Timing uses `performance.now()`.
+  - **What is timed:** only the time until the handler returns its `Response`; body streaming is not included.
+  - **On `workerd`,** time advances only across I/O (a Spectre mitigation), so durations of CPU-only handlers read as `0`.
+- **Path:** extracted with `pathStart`/`pathEnd`, so it is the raw, still-encoded path, and the query string is never logged.
+- **On a throw** it logs `{ error: true }` without `status`, then rethrows. It never swallows errors.
+- **Isolation:** an error thrown by `log` or `fields` is reported with `console.error` and never affects the response. `fields` cannot override the core fields; the core fields win.
+
+### Contract
+
+When implementing, add type tests for each factory's option types and env inference, especially `bearerAuth`'s `E` and `T`. Add runtime tests for every row and rule above. Every filter's tests run on all four runtimes.
 
 ## Request lifecycle
 
@@ -610,7 +763,7 @@ These are not part of the core. Compose them as filters or separate packages ins
 
 ## Open decisions
 
-None for Phases 1 and 2. APIs for Phase 3 and later are undecided, including the option shapes of the standard filters. Ask before implementing them.
+None for Phases 1 to 3. APIs for Phase 4 (`oleo.js/contract`) are undecided. Ask before implementing them.
 
 ## Roadmap
 
@@ -621,5 +774,5 @@ None for Phases 1 and 2. APIs for Phase 3 and later are undecided, including the
    4. Differential `URLPattern` tests. *(done)*
    5. `oleo.js/node`. *(done)*
 2. **Route groups:** `group(prefix, options?, ...items)`, flattened into the router's trie, with scoped filters and merged prefix parameters. See [Route groups](#route-groups-phase-2). *(done)*
-3. **`oleo.js/filters`:** tree-shakeable standard filters (CORS, Bearer auth, RFC 9457 Problem Details, structured request logging).
+3. **`oleo.js/filters`:** tree-shakeable standard filters `cors`, `bearerAuth`, `problemDetails`, and `requestLogger`. See [Standard filters](#standard-filters-phase-3).
 4. **`oleo.js/contract`:** an http4k-contract–style declarative layer that generates OpenAPI 3.1.
