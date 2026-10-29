@@ -6,14 +6,14 @@ Design influences: [http4k](https://www.http4k.org/) (server as a function, comp
 
 ## Status
 
-The Phase 1 specification is complete, and the project skeleton described in [Development environment](#development-environment) is in place. The type inference design is verified by `src/inference.test-d.ts`. Implemented so far:
+The Phase 1 specification is complete, and the project skeleton described in [Development environment](#development-environment) is in place. The type inference design is verified by `test/types/inference.test-d.ts`. Implemented so far:
 
 - The core types (`src/types.ts`).
 - Path extraction (`src/path.ts`).
 - The trie (`src/trie.ts`).
 - `router`, the route helpers, and the HTTP semantics (`src/router.ts`).
 - `toFetch` (`src/fetch.ts`), `compose` (`src/compose.ts`), and `contextKey` (`src/context-key.ts`).
-- The differential `URLPattern` tests (`src/urlpattern.test.ts`).
+- The differential `URLPattern` tests (`test/portable/urlpattern.test.ts`).
 - The Node adapter `oleo.js/node` (`src/node/listener.ts`).
 - Route groups: `group` (`src/router.ts`).
 
@@ -51,6 +51,7 @@ Portable packages never import adapters. Adapters may import portable packages.
 | Tests | Vitest 5 | Never use `bun test`; test files import from `vitest` |
 | Tests on `workerd` | `@cloudflare/vitest-plugin` | The successor to the deprecated `@cloudflare/vitest-pool-workers`; never use the old package |
 | Type tests | Vitest typecheck | `expectTypeOf` in `*.test-d.ts` files |
+| Property-based tests | fast-check | Dev dependency; generated cases run through Vitest on all four runtimes |
 | Lint | oxlint | Configured in `.oxlintrc.json` |
 | Type checking, build | TypeScript 7 (`tsc`) | Emits `.js` and `.d.ts` to `dist/`. No bundler |
 
@@ -64,23 +65,28 @@ Bun is the development tool, not a runtime target with special status. No source
 src/
   index.ts                  # `oleo.js` entry: public exports only
   types.ts                  # core types (see Core API)
-  inference.test-d.ts       # type inference contract (see Building an application)
   path.ts                   # path bounds within request.url
   trie.ts                   # segment trie: definition checks, matching, Allow lists
   router.ts                 # Route, RouteGroup, route helpers, group, router, default responses
   fetch.ts                  # toFetch, the executionCtx stub
   compose.ts                # compose
   context-key.ts            # contextKey
-  group.test.ts             # route group flattening, filters, definition errors
-  urlpattern.test.ts        # differential tests against URLPattern
-  runtime-baseline.test.ts  # checks the runtime assumptions the core relies on
   <module>.ts               # core modules (kebab-case)
-  <module>.test.ts          # runtime tests — portable, run on every runtime
-  <module>.test-d.ts        # type tests
   node/
     index.ts                # `oleo.js/node` entry
     listener.ts             # toNodeListener: ingress, egress, errors, disconnects
-    <module>.test.ts        # Node-only tests (real HTTP/1.1 and HTTP/2 servers)
+test/
+  portable/
+    <module>.test.ts        # portable runtime tests, including generated properties
+    router.property.test.ts # routing properties through the public API
+    arbitraries.ts          # shared input generators and deterministic run settings
+    group.test.ts           # route group flattening, filters, definition errors
+    urlpattern.test.ts      # corpus and generated URLPattern differential tests
+    runtime-baseline.test.ts # checks the runtime assumptions the core relies on
+  node/
+    listener.test.ts        # real HTTP/1.1 and HTTP/2 servers
+  types/
+    inference.test-d.ts     # public type inference contract
 vitest.config.ts            # projects: portable, node, types
 vitest.workers.config.ts    # portable tests inside workerd
 .oxlintrc.json
@@ -92,9 +98,9 @@ dist/                       # build output, not committed
 
 | File | Covers | `types` |
 | --- | --- | --- |
-| `tsconfig.json` | `src/` except `src/node/`, including tests | `[]`: no runtime types in scope |
-| `tsconfig.node.json` | `src/node/` and tooling config files | `["node"]` |
-| `tsconfig.build.json` | Non-test sources, for emit to `dist/` | Per the two above |
+| `tsconfig.json` | `src/` except `src/node/`, `test/portable/`, `test/types/` | `[]`: no runtime types in scope |
+| `tsconfig.node.json` | `src/node/`, `test/node/` and tooling config files | `["node"]` |
+| `tsconfig.build.json` | Only `src/`, for emit to `dist/` | `["node"]` for the adapter; portable isolation is checked separately |
 
 Required compiler options:
 
@@ -130,6 +136,16 @@ Coding rules that follow from these options:
 | `bun run build` | Emit `dist/` |
 
 Before considering a change done, run `lint`, `typecheck`, and `test`. The full matrix (`test:all`) runs in CI.
+
+### Property-based tests
+
+- All tests live under `test/`: portable runtime tests, Node adapter tests, and type tests remain separate Vitest projects. A missing test selection must fail; do not enable `passWithNoTests`.
+- Keep example-based regressions and the full type inference contract. fast-check adds generated inputs and shrinks failing cases; it does not replace integration or type tests.
+- `test/portable/arbitraries.ts` defines shared generators and `PROPERTY_OPTIONS` (seed `20261029`, 300 runs per property). Keep portable tests free of runtime globals, including when configuring randomness.
+- Properties cover parameter names and percent-decoding, route priority and registration order, `Allow` unions, group flattening, malformed paths, path extraction, context-key isolation, filter order, and URLPattern equivalence. Generate matching and nonmatching paths so a property cannot pass by only checking 404s.
+- Run routing properties with `bun run test --project portable router.property.test.ts`. All properties also run through the regular test commands and the four-runtime matrix.
+- To reproduce a failure, pass its printed `seed` and `path` to the failing `fc.assert` options. Keep the dependency version fixed, save the reduced input as a regression or an explicit `examples` entry, and remove the temporary replay `path` afterwards. To explore more inputs, temporarily change the shared seed and increase `numRuns`.
+- Reference results must be independent of the implementation. In particular, use `Object.fromEntries` for expected parameter maps so `__proto__` becomes an own property. workerd's URLPattern currently drops captures with that name; the differential oracle renames captures and maps them back, while also checking matching with the original pattern. Public API regressions still test the original names on every runtime.
 
 ## Core API
 
@@ -199,7 +215,7 @@ export default toFetch(app)
 
 - **Routes are values.** A `Route` is immutable, and `router()` reads it once. A router is itself an `HttpHandler`, so routers and filters nest freely.
 - **Type inference.** Route patterns are parsed with template literal types: `'/users/:id/*'` yields `ctx.params: { id: string; '*': string }`. `router<E>(...)` fixes `E` for its routes, and route helpers infer `E` and `P` contextually.
-- **Inference contract:** `src/inference.test-d.ts` is the contract for this inference, including route-level filters, mixed envs, and the rejection cases. It runs against the real implementations. Never weaken, delete, or `@ts-expect-error` away an existing case to make it pass; ask instead.
+- **Inference contract:** `test/types/inference.test-d.ts` is the contract for this inference, including route-level filters, mixed envs, and the rejection cases. It runs against the real implementations. Never weaken, delete, or `@ts-expect-error` away an existing case to make it pass; ask instead.
 - **Clients are handlers too.** Any `(req) => Promise<Response>` is assignable to `HttpHandler`. Do not pass `globalThis.fetch` itself as a handler: its second parameter is `RequestInit`, not `Context`. Wrap it as `(req) => fetch(req)`.
 
 ### Entry point
@@ -215,7 +231,7 @@ export default toFetch(app)
 ### Context
 
 - **One per request.** `fetch` creates exactly one `Context` per request and never mutates it afterwards.
-- **`params`** is a shared, frozen empty object outside a matched route. On a match with parameters, the router calls the handler with a derived context `{ ...ctx, params }`; it never mutates the context it received. Filters outside the router therefore never see route parameters.
+- **`params`** is a shared, frozen empty object outside a matched route. Captured parameters use a null-prototype object so names such as `__proto__` are ordinary own properties. On a match with parameters, the router calls the handler with a derived context `{ ...ctx, params }`; it never mutates the context it received. Filters outside the router therefore never see route parameters.
 - **Passing data downstream:** use [context keys](#context-keys). A filter may also pass a new request (`next(new Request(req, init), ctx)`).
 - **Data only.** A context holds plain fields plus the symbol-keyed entries written by context keys.
 - **`ExecutionContext`** is an oleo.js interface modeled on Cloudflare's. The core only passes it through or substitutes a stub. It never reads a platform global to obtain one.
@@ -256,7 +272,7 @@ get('/me', (req, ctx) => Response.json(userKey.get(ctx)))
 
 ## Route groups (Phase 2)
 
-*Status: implemented in `src/router.ts`. Runtime tests are in `src/group.test.ts`, and type tests in the "route groups" block of `src/inference.test-d.ts`.*
+*Status: implemented in `src/router.ts`. Runtime tests are in `test/portable/group.test.ts`, and type tests in the "route groups" block of `test/types/inference.test-d.ts`.*
 
 A group joins a prefix onto its routes when `router()` is called and flattens them into the same trie as every other route. At run time a grouped route is indistinguishable from writing its full pattern directly. There is no run-time mounting and no hidden path state in `Context`.
 
@@ -352,7 +368,7 @@ function router<E = unknown>(...items: Array<Route<E> | RouteGroup<E>>): HttpHan
 
   - **Without the annotation,** prefix parameters are missing from `ctx.params`, so using one is a compile error. It is never an untyped value.
   - **Env mismatch:** an annotated `RouteGroup<Env>` put into a `router` of a different env is a compile error.
-- **Contract:** the "route groups" block of `src/inference.test-d.ts` covers:
+- **Contract:** the "route groups" block of `test/types/inference.test-d.ts` covers:
   - each inline behavior above;
   - separately declared handlers;
   - the annotated and the unannotated module patterns;
@@ -526,7 +542,7 @@ When implementing, add type tests for each factory's option types and env infere
 
 ### Pattern syntax
 
-Patterns are a strict subset of `URLPattern` pathname syntax (`URLPattern` is part of ECMA-429). Every accepted pattern must match exactly the same paths as `new URLPattern({ pathname })`. `src/urlpattern.test.ts` verifies this guarantee on every runtime.
+Patterns are a strict subset of `URLPattern` pathname syntax (`URLPattern` is part of ECMA-429). Every accepted pattern must match exactly the same paths as `new URLPattern({ pathname })`. `test/portable/urlpattern.test.ts` verifies this guarantee on every runtime.
 
 | Token | Matches |
 | --- | --- |
@@ -584,7 +600,7 @@ The two intentional differences from `URLPattern`:
 - **No path matches:** `404 Not Found`.
 - **The path matches but no route accepts the method:** `405 Method Not Allowed`. The `Allow` header lists the union of methods registered on every path-matching terminal node.
 - **`HEAD`:** falls back to the `GET` handler when no `HEAD` handler is registered. `Allow` includes `HEAD` whenever `GET` is present.
-- **No body on `HEAD` responses.** A `HEAD` response never carries a body, whether it comes from an explicit `HEAD` route or the `GET` fallback. If the handler's response has a body, the router cancels it and returns a new body-less response with the same status, status text, and headers. A body-less response is returned as-is, at no cost.
+- **No body on `HEAD` responses.** A `HEAD` response never carries a body, whether it comes from an explicit `HEAD` route or the `GET` fallback. If the handler's response has a body, the router waits for cancellation and returns a new body-less response with the same status, status text, and headers. Cancellation failures reject through the normal error boundary. A body-less response is returned as-is, at no cost.
 - **`OPTIONS`:** no automatic handling. An unregistered `OPTIONS` request on an existing path gets a `405`. CORS preflight is the CORS filter's job.
 - **Method comparison:** exact and case-sensitive (Fetch already upper-cases standard methods).
 - **Fixed default responses.** The router's 404, 405, and 400 responses are empty-body defaults (the 405 carries `Allow`), and there is no option to replace them.
@@ -673,6 +689,7 @@ createServer(toNodeListener(toFetch(app), { env })).listen(3000)
 
 - **Head:** `writeHead(status, statusText, headers)`. Multiple `Set-Cookie` values are written via `headers.getSetCookie()`. On HTTP/2, `Connection`, `Keep-Alive`, `Transfer-Encoding`, and `Upgrade` are dropped.
 - **Body:** `stream.pipeline(Readable.fromWeb(res.body), serverRes)`, which honors backpressure. An error destroys the socket. A client abort tears down the pipeline and cancels the web stream. A `null` body ends immediately, and `HEAD` writes no body.
+- **Cancellation failures:** `HEAD` cleanup finishes before headers are sent, so failure is reported and returns 500. Cleanup of a late response is also awaited and reported on failure; the adapter never writes to an already destroyed response.
 - **No buffering** in either direction.
 
 ### Client disconnects
@@ -720,7 +737,7 @@ Node.js is not fully ECMA-429 conformant (its global object is not an `EventTarg
 ### Enforcement
 
 1. **Types:** portable packages, including their tests, compile under `tsconfig.json` with `types: []`. Neither `@types/node` nor `@types/bun` is in scope.
-2. **Lint:** two oxlint rules are enabled at the top level of `.oxlintrc.json`, and an `overrides` entry turns them off for `src/node/**` and `*.config.ts`:
+2. **Lint:** two oxlint rules are enabled at the top level of `.oxlintrc.json`, and an `overrides` entry turns them off for `src/node/**`, `test/node/**`, and `*.config.ts`:
    - `no-restricted-imports` bans runtime module specifiers.
    - `no-restricted-globals` bans the globals listed above.
 3. **Runtime matrix:** the portable `*.test.ts` files run on all four runtimes. Each test executes inside the named runtime itself, not inside a Node worker (verified through `navigator.userAgent`):
@@ -733,8 +750,8 @@ Node.js is not fully ECMA-429 conformant (its global object is not an `EventTarg
    | `deno` | `test:deno` | `deno run -A node_modules/vitest/vitest.mjs run` |
 
    A failure on any runtime blocks release.
-4. **Differential routing tests** (`src/urlpattern.test.ts`) verify the subset guarantee.
-   - **Method:** every pattern in its corpus gets a single-route trie, which is compared against `new URLPattern({ pathname })` on every path in the corpus. The comparison checks whether each path matches and, after decoding URLPattern's values, the parameter values.
+4. **Differential routing tests** (`test/portable/urlpattern.test.ts`) verify the subset guarantee.
+   - **Method:** corpus and generated patterns get a single-route trie, compared against `new URLPattern({ pathname })` on corpus or generated paths. The comparison checks matching and decoded parameter values. Reference capture names are aliased to avoid workerd's `__proto__` capture bug, as described under Property-based tests.
    - **Coverage:** all four runtimes ship `URLPattern`, so this runs four independent URLPattern implementations. The suite skips itself only on a runtime without `URLPattern`.
    - **Extending:** when changing pattern syntax or canonicalization, add patterns and paths to the corpus. A divergence means oleo is wrong, not the test.
 

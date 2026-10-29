@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { del, get, head, options, patch, post, put, route, router } from './router.ts'
-import { EMPTY_PARAMS } from './trie.ts'
-import type { Context, HttpHandler } from './types.ts'
+import { del, get, head, options, patch, post, put, route, router } from '../../src/router.ts'
+import { EMPTY_PARAMS } from '../../src/trie.ts'
+import type { Context, HttpHandler } from '../../src/types.ts'
 
 const ctx: Context = { params: EMPTY_PARAMS, env: undefined, executionCtx: { waitUntil() {} } }
 
@@ -22,6 +22,17 @@ describe('route helpers', () => {
 })
 
 describe('router', () => {
+  it.each(['__proto__', 'constructor', 'toString'])('captures prototype property name %s as an own parameter', async (name) => {
+    const app = router(get(`/users/:${name}`, (_req, ctx) => {
+      expect(Object.hasOwn(ctx.params, name)).toBe(true)
+      return Response.json(ctx.params)
+    }))
+    for (const [path, value] of [['alice', 'alice'], ['a%2Fb', 'a/b']]) {
+      const res = await call(app, `/users/${path}`)
+      expect(await res.json()).toEqual(Object.fromEntries([[name, value]]))
+    }
+  })
+
   it('dispatches to the matched handler with params in a derived context', async () => {
     const app = router(get('/users/:id', echo), post('/users', echo))
     expect(await (await call(app, '/users/42')).json()).toEqual({ method: 'GET', params: { id: '42' } })
@@ -82,6 +93,17 @@ describe('default responses', () => {
 })
 
 describe('HEAD', () => {
+  it.each(['throw', 'reject'])('propagates a cancellation failure (%s)', async (mode) => {
+    const error = new Error('cancel failed')
+    const app = router(get('/a', () => new Response(new ReadableStream({
+      cancel() {
+        if (mode === 'throw') throw error
+        return Promise.reject(error)
+      },
+    }))))
+    await expect(call(app, '/a', { method: 'HEAD' })).rejects.toBe(error)
+  })
+
   it('falls back to GET and drops the body, keeping status and headers', async () => {
     const app = router(get('/a', () => new Response('body', { status: 201, headers: { 'X-A': '1' } })))
     const res = await call(app, '/a', { method: 'HEAD' })

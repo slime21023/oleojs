@@ -193,7 +193,8 @@ export class Trie<T> {
   }
 
   #select(terminal: Node<T>): void {
-    this.params = terminal.hasParams ? {} : EMPTY_PARAMS
+    // Parameter names such as __proto__ must be ordinary own properties.
+    this.params = terminal.hasParams ? Object.create(null) : EMPTY_PARAMS
   }
 
   // Runs while unwinding from the selected terminal, so only the selected route is decoded.

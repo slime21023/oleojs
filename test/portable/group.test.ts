@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { compose } from './compose.ts'
-import { del, get, group, post, route, router } from './router.ts'
-import { EMPTY_PARAMS } from './trie.ts'
-import type { Context, HttpFilter, HttpHandler } from './types.ts'
+import { compose } from '../../src/compose.ts'
+import { del, get, group, post, route, router } from '../../src/router.ts'
+import { EMPTY_PARAMS } from '../../src/trie.ts'
+import type { Context, HttpFilter, HttpHandler } from '../../src/types.ts'
 
 const ctx: Context = { params: EMPTY_PARAMS, env: undefined, executionCtx: { waitUntil() {} } }
 const ok = () => new Response()

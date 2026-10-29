@@ -54,6 +54,7 @@ async function handle<E>(
     await writeResponse(response, req, res, controller.signal)
   } catch (error) {
     console.error(error)
+    if (res.destroyed) return
     if (!res.headersSent) respondEmpty(res, 500)
     else res.destroy(error instanceof Error ? error : undefined)
   }
@@ -103,11 +104,16 @@ function respondEmpty(res: NodeResponse, status: number): void {
   res.end()
 }
 
-function writeResponse(response: Response, req: NodeRequest, res: NodeResponse, signal: AbortSignal): Promise<void> {
+async function writeResponse(response: Response, req: NodeRequest, res: NodeResponse, signal: AbortSignal): Promise<void> {
   const body = response.body
   if (signal.aborted) {
-    void body?.cancel()
-    return Promise.resolve()
+    await body?.cancel()
+    return
+  }
+  if (req.method === 'HEAD') {
+    // Finish cleanup before committing headers so failures can still become a 500.
+    await body?.cancel()
+    if (signal.aborted) return
   }
 
   const http2 = res instanceof Http2ServerResponse
@@ -123,9 +129,8 @@ function writeResponse(response: Response, req: NodeRequest, res: NodeResponse, 
   else res.writeHead(response.status, headers)
 
   if (body === null || req.method === 'HEAD') {
-    void body?.cancel()
     res.end()
-    return Promise.resolve()
+    return
   }
 
   return new Promise((resolve, reject) => {

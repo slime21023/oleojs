@@ -101,10 +101,11 @@ export function group(prefix: string, ...rest: unknown[]): RouteGroup {
   })
 }
 
-function withoutBody(res: Response): Response {
+function withoutBody(res: Response): Response | Promise<Response> {
   if (res.body === null) return res
-  void res.body.cancel()
-  return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers })
+  return res.body.cancel().then(() =>
+    new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers }),
+  )
 }
 
 type Wrap<E> = (handler: HttpHandler<E, any>) => HttpHandler<E, any>

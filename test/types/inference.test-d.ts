@@ -1,11 +1,11 @@
 // Type inference contract for the public API (AGENTS.md, Building an application).
 // Never weaken or delete a case to make it pass.
 import { describe, expectTypeOf, it } from 'vitest'
-import { compose } from './compose.ts'
-import { contextKey } from './context-key.ts'
-import { toFetch } from './fetch.ts'
-import { type RouteGroup, get, group, router } from './router.ts'
-import type { FetchHandler, HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from './types.ts'
+import { compose } from '../../src/compose.ts'
+import { contextKey } from '../../src/context-key.ts'
+import { toFetch } from '../../src/fetch.ts'
+import { type RouteGroup, get, group, router } from '../../src/router.ts'
+import type { FetchHandler, HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from '../../src/types.ts'
 
 interface Env {
   DB: { query(sql: string): string }

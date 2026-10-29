@@ -1,7 +1,9 @@
+import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { compose } from './compose.ts'
-import { EMPTY_PARAMS } from './trie.ts'
-import type { Context, HttpFilter, HttpHandler } from './types.ts'
+import { compose } from '../../src/compose.ts'
+import { EMPTY_PARAMS } from '../../src/trie.ts'
+import type { Context, HttpFilter, HttpHandler } from '../../src/types.ts'
+import { PROPERTY_OPTIONS } from './arbitraries.ts'
 
 const ctx: Context = { params: EMPTY_PARAMS, env: undefined, executionCtx: { waitUntil() {} } }
 const request = () => new Request('http://example.test/')
@@ -16,6 +18,18 @@ function tracing(name: string, log: string[]): HttpFilter {
 }
 
 describe('compose', () => {
+  it('enters any filter sequence in order and exits in reverse', async () => {
+    await fc.assert(fc.asyncProperty(fc.array(fc.string(), { maxLength: 12 }), async (names) => {
+      const log: string[] = []
+      const app = compose(...names.map((name) => tracing(name, log)))(() => new Response())
+      await app(request(), ctx)
+      expect(log).toEqual([
+        ...names.map((name) => `${name} in`),
+        ...names.toReversed().map((name) => `${name} out`),
+      ])
+    }), PROPERTY_OPTIONS)
+  })
+
   it('makes the first filter outermost', async () => {
     const log: string[] = []
     const handler: HttpHandler = () => (log.push('handler'), new Response())

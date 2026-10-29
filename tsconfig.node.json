@@ -3,6 +3,6 @@
   "compilerOptions": {
     "types": ["node"]
   },
-  "include": ["src/node", "*.config.ts"],
+  "include": ["src/node", "test/node", "*.config.ts"],
   "exclude": []
 }

@@ -33,7 +33,7 @@
   },
   "overrides": [
     {
-      "files": ["src/node/**", "*.config.ts"],
+      "files": ["src/node/**", "test/node/**", "*.config.ts"],
       "rules": {
         "no-restricted-imports": "off",
         "no-restricted-globals": "off"

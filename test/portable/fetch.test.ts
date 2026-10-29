@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { STUB_EXECUTION_CTX, toFetch } from './fetch.ts'
-import { EMPTY_PARAMS } from './trie.ts'
-import type { Context, ExecutionContext } from './types.ts'
+import { STUB_EXECUTION_CTX, toFetch } from '../../src/fetch.ts'
+import { EMPTY_PARAMS } from '../../src/trie.ts'
+import type { Context, ExecutionContext } from '../../src/types.ts'
 
 const request = () => new Request('http://example.test/')
 

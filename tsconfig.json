@@ -12,6 +12,6 @@
     "noEmit": true,
     "types": []
   },
-  "include": ["src"],
+  "include": ["src", "test/portable", "test/types"],
   "exclude": ["src/node"]
 }

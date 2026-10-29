@@ -1,14 +1,30 @@
+import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { compose } from './compose.ts'
-import { contextKey } from './context-key.ts'
-import { toFetch } from './fetch.ts'
-import { get, router } from './router.ts'
-import { EMPTY_PARAMS } from './trie.ts'
-import type { Context, HttpFilter } from './types.ts'
+import { compose } from '../../src/compose.ts'
+import { contextKey } from '../../src/context-key.ts'
+import { toFetch } from '../../src/fetch.ts'
+import { get, router } from '../../src/router.ts'
+import { EMPTY_PARAMS } from '../../src/trie.ts'
+import type { Context, HttpFilter } from '../../src/types.ts'
+import { PROPERTY_OPTIONS } from './arbitraries.ts'
 
 const ctx: Context = Object.freeze({ params: EMPTY_PARAMS, env: undefined, executionCtx: { waitUntil() {} } })
 
 describe('contextKey', () => {
+  it('keeps same-name keys independent across arbitrary context derivations', () => {
+    fc.assert(fc.property(fc.string(), fc.jsonValue(), fc.jsonValue(), (name, first, second) => {
+      const a = contextKey<unknown>(name)
+      const b = contextKey<unknown>(name)
+      const initial = a.with(ctx, first)
+      const derived = b.with(initial, second)
+      expect(a.get(derived)).toBe(first)
+      expect(b.get(derived)).toBe(second)
+      expect(b.find(initial)).toBeUndefined()
+      expect(a.find(ctx)).toBeUndefined()
+      expect(a.get({ ...derived, params: {} })).toBe(first)
+    }), PROPERTY_OPTIONS)
+  })
+
   it('derives a context without changing the original', () => {
     const userKey = contextKey<string>('user')
     const derived = userKey.with(ctx, 'alice')

@@ -9,7 +9,6 @@ export default defineConfig({
   ],
   test: {
     name: 'workerd',
-    include: ['src/**/*.test.ts'],
-    exclude: ['src/node/**'],
+    include: ['test/portable/**/*.test.ts'],
   },
 })

@@ -3,9 +3,9 @@ import { connect as http2Connect, createServer as createHttp2Server } from 'node
 import type { AddressInfo, Server } from 'node:net'
 import { connect as netConnect } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { STUB_EXECUTION_CTX } from '../fetch.ts'
-import type { ExecutionContext, FetchHandler } from '../types.ts'
-import { type NodeListener, type NodeListenerOptions, toNodeListener } from './listener.ts'
+import { STUB_EXECUTION_CTX } from '../../src/fetch.ts'
+import type { ExecutionContext, FetchHandler } from '../../src/types.ts'
+import { type NodeListener, type NodeListenerOptions, toNodeListener } from '../../src/node/listener.ts'
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -184,6 +184,49 @@ describe('egress', () => {
 })
 
 describe('errors and aborts', () => {
+  it.each(['throw', 'reject'])('reports HEAD cancellation failures and responds 500 (%s)', async (mode) => {
+    const report = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const error = new Error('cancel failed')
+    try {
+      const port = await serve(fetchable(() => new Response(new ReadableStream({
+        cancel() {
+          if (mode === 'throw') throw error
+          return Promise.reject(error)
+        },
+      }))))
+      const reply = await send(port, 'HEAD', '/')
+      expect([reply.status, reply.body]).toEqual([500, ''])
+      expect(report).toHaveBeenCalledWith(error)
+    } finally {
+      report.mockRestore()
+    }
+  })
+
+  it('reports cancellation failures of a response returned after the client disconnects', async () => {
+    const report = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const error = new Error('late cancel failed')
+    const cancelled = vi.fn(() => Promise.reject(error))
+    let finish: ((response: Response) => void) | undefined
+    let signal: AbortSignal | undefined
+    try {
+      const port = await serve(fetchable((request) => {
+        signal = request.signal
+        return new Promise<Response>((resolve) => { finish = resolve })
+      }))
+      const req = httpRequest({ host: '127.0.0.1', port, path: '/' })
+      req.on('error', () => {})
+      req.end()
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      req.destroy()
+      await vi.waitFor(() => expect(signal?.aborted).toBe(true))
+      finish!(new Response(new ReadableStream({ cancel: cancelled })))
+      await vi.waitFor(() => expect(report).toHaveBeenCalledWith(error))
+      expect(cancelled).toHaveBeenCalledTimes(1)
+    } finally {
+      report.mockRestore()
+    }
+  })
+
   it('responds 500 and reports the error when the app rejects', async () => {
     const report = vi.spyOn(console, 'error').mockImplementation(() => {})
     const error = new Error('boom')

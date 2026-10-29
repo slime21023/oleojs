@@ -2,19 +2,17 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    passWithNoTests: true,
     projects: [
       {
         test: {
           name: 'portable',
-          include: ['src/**/*.test.ts'],
-          exclude: ['src/node/**'],
+          include: ['test/portable/**/*.test.ts'],
         },
       },
       {
         test: {
           name: 'node',
-          include: ['src/node/**/*.test.ts'],
+          include: ['test/node/**/*.test.ts'],
         },
       },
       {
@@ -24,7 +22,7 @@ export default defineConfig({
           typecheck: {
             enabled: true,
             only: true,
-            include: ['src/**/*.test-d.ts'],
+            include: ['test/types/**/*.test-d.ts'],
             tsconfig: './tsconfig.json',
           },
         },
