@@ -4,8 +4,8 @@ import { describe, expectTypeOf, it } from 'vitest'
 import { compose } from './compose.ts'
 import { contextKey } from './context-key.ts'
 import { toFetch } from './fetch.ts'
-import { get, router } from './router.ts'
-import type { FetchHandler, HttpFilter, HttpHandler, Params } from './types.ts'
+import { type RouteGroup, get, group, router } from './router.ts'
+import type { FetchHandler, HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from './types.ts'
 
 interface Env {
   DB: { query(sql: string): string }
@@ -110,6 +110,92 @@ describe('filters', () => {
       expectTypeOf(userKey.get(ctx)).toEqualTypeOf<{ name: string }>()
       return ok()
     }))
+  })
+})
+
+describe('route groups', () => {
+  const logger: HttpFilter = (next) => (req, ctx) => next(req, ctx)
+  const needsDb: HttpFilter<Env> = (next) => (req, ctx) => next(req, ctx)
+
+  it('passes prefix params to inline routes', () => {
+    router(
+      group('/users/:userId', get('/posts/:postId', (req, ctx) => {
+        expectTypeOf(ctx.params).toEqualTypeOf<{ readonly userId: string; readonly postId: string }>()
+        return ok()
+      })),
+    )
+  })
+
+  it('accumulates params through nested groups', () => {
+    router(
+      group('/orgs/:orgId', group('/users/:userId', get('', (req, ctx) => {
+        expectTypeOf(ctx.params).toEqualTypeOf<{ readonly orgId: string; readonly userId: string }>()
+        return ok()
+      }))),
+    )
+  })
+
+  it('keeps inference with an options object', () => {
+    router(
+      group('/admin/:tenant', { filters: [logger] }, get('/users/:id', (req, ctx) => {
+        expectTypeOf(ctx.params).toEqualTypeOf<{ readonly tenant: string; readonly id: string }>()
+        return ok()
+      })),
+    )
+  })
+
+  it('passes env from router<E>() through groups and their filters', () => {
+    router<Env>(
+      group('/a', { filters: [needsDb] }, get('/b', (req, ctx) => {
+        expectTypeOf(ctx.env).toEqualTypeOf<Env>()
+        return ok()
+      })),
+    )
+  })
+
+  it('accepts separately declared handlers typed with their full params', () => {
+    const show: HttpHandler<unknown, ParamsOf<'/users/:id'>> = ok
+    const post: HttpHandler<unknown, JoinParams<ParamsOf<'/users/:userId'>, ParamsOf<'/posts/:postId'>>> = ok
+    router(get('/users/:id', show), group('/users/:userId', get('/posts/:postId', post)))
+  })
+
+  it('rejects a group filter that needs a different env', () => {
+    // @ts-expect-error -- needsDb requires Env
+    router<OtherEnv>(group('/a', { filters: [needsDb] }, get('/b', ok)))
+  })
+
+  it('rejects params declared by neither the prefix nor the pattern', () => {
+    group('/users/:userId', get('/x', (req, ctx) => {
+      // @ts-expect-error -- not declared
+      void ctx.params.nope
+      return ok()
+    }))
+  })
+
+  it('types groups from another module through a RouteGroup annotation', () => {
+    const userRoutes = (): RouteGroup<Env> =>
+      group('/users/:userId', get('/posts/:postId', (req, ctx) => {
+        expectTypeOf(ctx.params).toEqualTypeOf<{ readonly userId: string; readonly postId: string }>()
+        expectTypeOf(ctx.env).toEqualTypeOf<Env>()
+        return ok()
+      }))
+    const teamRoutes: RouteGroup = group('/teams/:teamId', group('/members/:memberId', get('', (req, ctx) => {
+      expectTypeOf(ctx.params).toEqualTypeOf<{ readonly teamId: string; readonly memberId: string }>()
+      return ok()
+    })))
+    router<Env>(userRoutes(), teamRoutes)
+    // @ts-expect-error -- an Env group cannot go into a router of another env
+    router<OtherEnv>(userRoutes())
+  })
+
+  it('fails to compile, never goes untyped, when the annotation is missing', () => {
+    const unannotated = () =>
+      group('/users/:userId', get('/x', (req, ctx) => {
+        // @ts-expect-error -- without a RouteGroup annotation the prefix param is missing
+        void ctx.params.userId
+        return ok()
+      }))
+    router(unannotated())
   })
 })
 

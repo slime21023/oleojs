@@ -14,6 +14,11 @@ export type ParamsOf<TPattern extends string> =
   string extends TPattern ? Params
   : { readonly [K in keyof PatternParams<TPattern> & string]: string }
 
+// Must stay a plain mapped type: a conditional would collapse a still-unresolved
+// `A` to `Params` during inference (see AGENTS.md, Route groups > Types).
+export type JoinParams<A extends Params, B extends Params> =
+  { readonly [K in (keyof A | keyof B) & string]: string }
+
 export interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void
 }

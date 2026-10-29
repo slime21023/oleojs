@@ -13,11 +13,11 @@ The Phase 1 specification is complete, and the project skeleton described in [De
 - The trie (`src/trie.ts`).
 - `router`, the route helpers, and the HTTP semantics (`src/router.ts`).
 - `toFetch` (`src/fetch.ts`), `compose` (`src/compose.ts`), and `contextKey` (`src/context-key.ts`).
-
 - The differential `URLPattern` tests (`src/urlpattern.test.ts`).
 - The Node adapter `oleo.js/node` (`src/node/listener.ts`).
+- Route groups: `group` (`src/router.ts`).
 
-**Phase 1 is complete.** Phase 2 is designed (see [Route groups](#route-groups-phase-2)) and is the next step. Items listed under [Open decisions](#open-decisions) are not settled — ask before implementing them.
+**Phases 1 and 2 are complete.** Phase 3 (`oleo.js/filters`) needs its APIs decided first. Items listed under [Open decisions](#open-decisions) are not settled — ask before implementing them.
 
 ## Hard rules
 
@@ -67,10 +67,11 @@ src/
   inference.test-d.ts       # type inference contract (see Building an application)
   path.ts                   # path bounds within request.url
   trie.ts                   # segment trie: definition checks, matching, Allow lists
-  router.ts                 # Route, route helpers, router, default responses
+  router.ts                 # Route, RouteGroup, route helpers, group, router, default responses
   fetch.ts                  # toFetch, the executionCtx stub
   compose.ts                # compose
   context-key.ts            # contextKey
+  group.test.ts             # route group flattening, filters, definition errors
   urlpattern.test.ts        # differential tests against URLPattern
   runtime-baseline.test.ts  # checks the runtime assumptions the core relies on
   <module>.ts               # core modules (kebab-case)
@@ -191,7 +192,8 @@ export default toFetch(app)
 | --- | --- | --- |
 | `get`, `post`, `put`, `patch`, `del`, `head`, `options` `(pattern, handler)` | `Route` | `del` because `delete` is a reserved word |
 | `route(method, pattern, handler)` | `Route` | Any other method (`PROPFIND`, …) |
-| `router(...routes)` | `HttpHandler` | Builds the trie once. Throws on [route definition errors](#route-definition-errors) |
+| `router(...items)` | `HttpHandler` | Takes routes and groups. Builds the trie once. Throws on [route definition errors](#route-definition-errors) |
+| `group(prefix, options?, ...items)` | `RouteGroup` | See [Route groups](#route-groups-phase-2) |
 | `compose(...filters)` | `HttpFilter` | `compose(a, b)(h)` is `a(b(h))`: the first filter is outermost. `compose()` is the identity |
 | `toFetch(handler)` | `FetchHandler` | The only entry point. Creates the `Context` |
 
@@ -252,7 +254,7 @@ get('/me', (req, ctx) => Response.json(userKey.get(ctx)))
 
 ## Route groups (Phase 2)
 
-*Status: designed and verified by a type-level probe; not implemented yet.*
+*Status: implemented in `src/router.ts`. Runtime tests are in `src/group.test.ts`, and type tests in the "route groups" block of `src/inference.test-d.ts`.*
 
 A group joins a prefix onto its routes when `router()` is called and flattens them into the same trie as every other route. At run time a grouped route is indistinguishable from writing its full pattern directly. There is no run-time mounting and no hidden path state in `Context`.
 
@@ -326,9 +328,9 @@ function router<E = unknown>(...items: Array<Route<E> | RouteGroup<E>>): HttpHan
 ```
 
 - **`TBase`** is the set of prefix parameters a route or group expects from the groups that enclose it. A phantom, contravariant `BASE` member carries it. A route expecting nothing fits anywhere, and `router()` accepts only items expecting nothing.
-- **Three findings from the probe. Do not undo them:**
+- **Three required type details. Do not undo them.** Each was verified by reverting it and watching the contract fail:
   - **`JoinParams` must not be a conditional type.** A conditional collapses a still-unresolved `TBase` to `Params` during inference.
-  - **The route helpers must wrap `TBase` in `NoInfer`.** Otherwise `TBase` is inferred backwards from the handler and degrades to `Params`.
+  - **The route helpers must wrap `TBase` in `NoInfer`.** Without it, a separately declared handler (`const show: HttpHandler<E, ParamsOf<'/users/:id'>>`) makes `TBase` be inferred backwards and degrade to `Params`. That breaks even ungrouped `get('/users/:id', show)`. The `NoInfer` in `group()`'s own signature is defensive: no known case needs it.
   - **The `FILTER_ENV` phantom on `HttpFilter` is required** for `options.filters` to be env-checked.
 - **Inline routes:**
   - prefix parameters flow into the routes;
@@ -348,8 +350,9 @@ function router<E = unknown>(...items: Array<Route<E> | RouteGroup<E>>): HttpHan
 
   - **Without the annotation,** prefix parameters are missing from `ctx.params`, so using one is a compile error. It is never an untyped value.
   - **Env mismatch:** an annotated `RouteGroup<Env>` put into a `router` of a different env is a compile error.
-- **Contract:** when implementing, add these cases to `src/inference.test-d.ts`:
+- **Contract:** the "route groups" block of `src/inference.test-d.ts` covers:
   - each inline behavior above;
+  - separately declared handlers;
   - the annotated and the unannotated module patterns;
   - every rejection.
 
@@ -617,6 +620,6 @@ None for Phases 1 and 2. APIs for Phase 3 and later are undecided, including the
    3. `toFetch`, `compose`, and `contextKey`. *(done)*
    4. Differential `URLPattern` tests. *(done)*
    5. `oleo.js/node`. *(done)*
-2. **Route groups:** `group(prefix, options?, ...items)`, flattened into the router's trie, with scoped filters and merged prefix parameters. See [Route groups](#route-groups-phase-2).
+2. **Route groups:** `group(prefix, options?, ...items)`, flattened into the router's trie, with scoped filters and merged prefix parameters. See [Route groups](#route-groups-phase-2). *(done)*
 3. **`oleo.js/filters`:** tree-shakeable standard filters (CORS, Bearer auth, RFC 9457 Problem Details, structured request logging).
 4. **`oleo.js/contract`:** an http4k-contract–style declarative layer that generates OpenAPI 3.1.
