@@ -48,7 +48,7 @@ console.log(await response.json()) // { userId: '42', postId: '7' }
 
 ## Available modules
 
-The package currently exposes two entry points: `oleo.js` and `oleo.js/node`.
+The package currently exposes three entry points: `oleo.js`, `oleo.js/filters`, and `oleo.js/node`.
 
 | Module | Public API | Purpose |
 | --- | --- | --- |
@@ -58,9 +58,13 @@ The package currently exposes two entry points: `oleo.js` and `oleo.js/node`.
 | Typed context | `contextKey`, `ContextKey`, `Context` | Pass typed values, environment data, and route parameters through request handling. |
 | Fetch entry point | `toFetch`, `FetchHandler`, `ExecutionContext` | Create a per-request context and expose a callable `fetch` entry point. |
 | Route types | `Route`, `Params`, `ParamsOf` | Describe route values and type handlers declared separately from their routes. |
+| CORS | `cors`, `CorsOptions` from `oleo.js/filters` | Apply an explicit origin policy, handle preflights, and add response headers. |
+| Bearer authentication | `bearerAuth`, `BearerAuthOptions` from `oleo.js/filters` | Verify tokens through application code and optionally store a typed principal. |
+| Problem details | `problemDetails`, `Problem`, `ProblemDetailsOptions` from `oleo.js/filters` | Convert thrown errors and empty error responses into problem documents. |
+| Request logging | `requestLogger`, `LogEntry`, `RequestLoggerOptions` from `oleo.js/filters` | Record the request outcome and duration, with optional application fields. |
 | Node.js adapter | `toNodeListener` from `oleo.js/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. |
 
-All modules except the Node.js adapter are exported from `oleo.js`.
+Routing, composition, context, and Fetch APIs are exported from `oleo.js`. Filters and the Node.js adapter have their own entry points.
 
 ### Routing and groups
 
@@ -100,6 +104,67 @@ export default toFetch(compose(identifyRequest)(routes))
 
 Filters can return early, handle errors, or transform a response. To change response headers, copy the headers and construct a new `Response`. Keep incoming requests and responses unchanged.
 
+### Standard filters
+
+All four standard filters are available from `oleo.js/filters`. They compose with custom filters and preserve handler environment and route-parameter types.
+
+```ts
+import { compose, contextKey, get, group, router, toFetch } from 'oleo.js'
+import type { Context } from 'oleo.js'
+import { bearerAuth, cors, problemDetails, requestLogger } from 'oleo.js/filters'
+
+interface User { id: string }
+interface Env { verifyToken(token: string): Promise<User | undefined> }
+
+const userKey = contextKey<User>('user')
+const routes = router<Env>(
+  group('/api', {
+    filters: [bearerAuth({
+      verify: (token, _request, ctx: Context<Env>) => ctx.env.verifyToken(token),
+      key: userKey,
+      realm: 'api',
+    })],
+  }, get('/me', (_request, ctx) => Response.json(userKey.get(ctx)))),
+)
+
+const app = toFetch(compose(
+  requestLogger(),
+  cors({ origin: 'https://app.example.com' }),
+  problemDetails(),
+)(routes))
+
+export default app
+```
+
+Supply the application's `verifyToken` through `env`, as described under runtime integration below. The outer logger records the final status, CORS handles preflights before authentication, and problem details converts authentication and routing errors. CORS belongs around the whole router; group authentication runs only for matched routes.
+
+- **CORS:** explicitly choose `'*'`, one serialized origin, an origin list, or a synchronous predicate. Configure methods, allowed/exposed headers, credentials, and preflight cache duration as needed. Credentials require an explicit origin policy rather than `'*'`. Allowed preflights return `204`; normal responses keep their body while receiving copied headers and merged `Vary` values. The policy follows the [Fetch CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol).
+- **Bearer authentication:** `verify` may be synchronous or asynchronous. Only `undefined` rejects a token; other values are valid principals. An optional context key stores that principal with its type checked against the verifier. Missing or rejected credentials return `401`; malformed Bearer credentials return `400`, with [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.html) challenges. Verification errors propagate to the error filter.
+- **Request logging:** the default writes one JSON entry with the method, raw path, status, and duration in milliseconds. Query strings are excluded, and timing ends when the handler returns a response. Customize `log(entry)` and synchronous `fields(request, response)` callbacks; additional fields cannot override core fields. Thrown errors are logged and rethrown. Logging failures are reported without changing the request outcome.
+
+Each factory validates its options when called. Filters keep the package free of runtime dependencies.
+
+### Problem details
+
+Wrap a router with `problemDetails()` to render errors as [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html) problem documents:
+
+```ts
+import { get, router, toFetch } from 'oleo.js'
+import { problemDetails } from 'oleo.js/filters'
+
+const routes = router(get('/health', () => new Response('ok')))
+
+export default toFetch(problemDetails()(routes))
+```
+
+An unknown path now returns a `404` response with `Content-Type: application/problem+json` and the document `{ "status": 404, "type": "about:blank", "title": "Not Found" }`. Thrown errors default to a generic `500` without exposing their messages or stacks.
+
+- Use `fromError(error, request)` to synchronously map application errors to a `Problem` with an integer status from 400 through 599. Invalid mappings fall back to the generic 500.
+- Use `emptyResponses: false` to disable conversion of existing empty error responses. Responses that already have a body, including an empty string, pass through unchanged.
+- Use `onError(error, request)` to report thrown errors that become 5xx responses. The default is `console.error`; reporting failures do not change the response.
+
+Generated HEAD responses remain bodyless. When an empty response is converted, its headers are copied, Content-Type is replaced, and stale Content-Length and Content-Encoding values are removed. Headers such as Allow and WWW-Authenticate are preserved.
+
 ### Environments and runtime integration
 
 Use `router<Env>(...)` to make application environment data available as `ctx.env` with the expected type. For a direct call, supply that data as the second argument to `app.fetch(request, env)`. A hosting runtime may supply its own second argument, so its meaning depends on the integration.
@@ -120,12 +185,9 @@ The adapter also accepts an `env` option for application data. Server configurat
 
 ## Planned extensions
 
-The routing core, route groups, middleware composition, context keys, Fetch entry point, and Node.js adapter are implemented.
+The routing core, route groups, middleware composition, context keys, Fetch entry point, all four standard filters, and Node.js adapter are implemented.
 
-The following entry points are planned and are **not currently implemented or exported**:
-
-- **`oleo.js/filters`**: standard CORS, Bearer authentication, problem-details responses, and request logging filters. Their design is documented in the technical reference.
-- **`oleo.js/contract`**: declarative contracts and OpenAPI generation. The API is not yet settled.
+The remaining planned extension is **`oleo.js/contract`** for declarative contracts and OpenAPI generation. This entry point is not implemented or exported, and the API is not yet settled.
 
 Application-specific validation, rendering, and file-system conventions remain application responsibilities.
 

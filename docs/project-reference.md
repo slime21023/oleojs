@@ -12,14 +12,14 @@ Design influences: [http4k](https://www.http4k.org/) (server as a function, comp
 | --- | --- | --- | --- |
 | `oleo.js` | Portable | Router, route helpers, groups, core types, `compose`, context keys, `toFetch` | Phases 1–2 implemented |
 | `oleo.js/node` | Adapter | `node:http` / `node:http2` bridge | Implemented |
-| `oleo.js/filters` | Portable | CORS, Bearer auth, RFC 9457 errors, request logging | Phase 3 designed; not implemented or exported |
+| `oleo.js/filters` | Portable | CORS, Bearer authentication, RFC 9457 errors, and request logging | Phase 3 implemented |
 | `oleo.js/contract` | Portable | Declarative contracts, OpenAPI 3.1 generation | Phase 4 undecided; not implemented or exported |
 
-Phase 3 is the next planned feature; its [complete specification](#standard-filters-phase-3) is at the end of this file. There are no open API decisions for Phases 1–3. **Ask before implementing Phase 4 APIs.**
+Phases 1–3 are implemented, including all four [standard filters](#standard-filters-phase-3). There are no open API decisions for these phases. **Ask before implementing Phase 4 APIs.**
 
-Read the [hard rules](#hard-rules) and [development workflow](#development-environment) before changing code. Use the [repository layout](#repository-layout) to locate implementations and tests. The sections below describe the current contracts; future filters are explicitly separated.
+Read the [hard rules](#hard-rules) and [development workflow](#development-environment) before changing code. Use the [repository layout](#repository-layout) to locate implementations and tests. The sections below describe the current contracts; Phase 4 remains outside the implemented API.
 
-Contract reference: [Core API](#core-api) · [Routing](#routing) · [Route groups](#route-groups-phase-2) · [HTTP semantics](#http-semantics) · [Node adapter](#nodejs-adapter-oleojsnode).
+Contract reference: [Core API](#core-api) · [Routing](#routing) · [Route groups](#route-groups-phase-2) · [HTTP semantics](#http-semantics) · [Node adapter](#nodejs-adapter-oleojsnode) · [Standard filters](#standard-filters-phase-3).
 
 ## Hard rules
 
@@ -85,6 +85,12 @@ src/
     route.ts                # immutable Route/RouteGroup values, helpers, group, internal kind checks
     router.ts               # group flattening, filter composition, dispatch, default responses
     trie.ts                 # segment trie: definition checks, matching, Allow lists
+  filters/
+    index.ts                # `oleo.js/filters` entry
+    cors.ts                 # origin policy, preflight handling, and copied response headers
+    bearer-auth.ts          # Bearer credentials, verification, and typed principals
+    problem-details.ts      # problem documents, error mapping, and isolated reporting
+    request-logger.ts       # request outcomes, timing, and isolated logging callbacks
   node/
     index.ts                # `oleo.js/node` entry
     listener.ts             # toNodeListener: ingress, egress, errors, disconnects
@@ -99,10 +105,19 @@ test/
       group.test.ts         # route group flattening, filters, definition errors
       trie.test.ts          # matching, parameter decoding, definition errors
       urlpattern.test.ts    # corpus and generated URLPattern differential tests
+    filters/
+      cors.test.ts          # origin policies, preflights, Vary, and response preservation
+      bearer-auth.test.ts   # challenges, verification, principals, and group placement
+      problem-details.test.ts # error mapping, response conversion, and reporting
+      problem-details.property.test.ts # generated status/header/body and serialization properties
+      request-logger.test.ts # outcome fields, timing, privacy, and callback isolation
+      standard-filters.test.ts # composition of all four filters around routed authentication
+      standard-filters.property.test.ts # generated CORS, Bearer, and logging properties
   node/
     listener.test.ts        # real HTTP/1.1 and HTTP/2 servers
   types/
     inference.test-d.ts     # public type inference contract
+    filters.test-d.ts       # filter options and preservation of environment/parameter inference
 vitest.config.ts            # projects: portable, node, types
 vitest.workers.config.ts    # portable tests inside workerd
 .oxlintrc.json
@@ -113,7 +128,7 @@ dist/                       # build output, not committed
 ### Module boundaries
 
 - Portable packages never import adapters. Adapters may import portable packages.
-- `src/index.ts` and `src/node/index.ts` are the public export boundaries. Internal modules import their dependencies directly; no internal barrel is needed under `routing/`.
+- `src/index.ts`, `src/filters/index.ts`, and `src/node/index.ts` are the public export boundaries. Internal modules import their dependencies directly; no internal barrel is needed under `routing/`.
 - `routing/route.ts` only creates immutable values and owns their internal tags. Validation and filter application stay in `router()`; do not move them into route helpers or `group()`.
 - Shared context defaults and HTTP method rules live outside `routing/`, so `fetch.ts` and the Node adapter do not depend on routing implementation modules.
 - Keep inference machinery in `types.ts` and beside route definitions. See the [type inference contract](#type-inference-contract) before changing signatures.
@@ -140,7 +155,7 @@ Coding rules that follow from these options:
 ### Package manifest
 
 - `"type": "module"`, `"sideEffects": false`, `"files": ["dist"]`.
-- `exports` maps `.` → `dist/index.js` and `./node` → `dist/node/index.js`, each with a `types` condition.
+- `exports` maps `.` → `dist/index.js`, `./filters` → `dist/filters/index.js`, and `./node` → `dist/node/index.js`, each with a `types` condition.
 - `engines.node` covers the currently maintained Node.js LTS lines.
 - **Declaration files keep `.ts` specifiers.** `rewriteRelativeImportExtensions` rewrites them in emitted `.js` only, so the emitted `.d.ts` files still import `./routing/router.ts` and similar.
   - **Verified:** a consumer project on TypeScript 7 with `NodeNext` resolves them to the `.d.ts` files and keeps full inference. The built JavaScript also runs on Node, Bun, and Deno.
@@ -149,6 +164,8 @@ Coding rules that follow from these options:
 ### Type inference contract
 
 [`test/types/inference.test-d.ts`](../test/types/inference.test-d.ts) is the contract for route parameters, env compatibility, filters, groups, and their rejection cases. It tests the real implementations. **Never weaken, delete, or add `@ts-expect-error` to an existing case just to make it pass; ask instead.**
+
+[`test/types/filters.test-d.ts`](../test/types/filters.test-d.ts) covers each factory's options, contextual environments, route-parameter preservation, and principal types. The env-agnostic factories use `<E = unknown>` to carry the surrounding environment type into group options; returning a fixed `HttpFilter<unknown>` would widen the group's environment to `unknown`. Bearer verification accepts an annotated context or infers its environment from the surrounding router/group.
 
 Keep these mechanisms intact:
 
@@ -159,6 +176,7 @@ Keep these mechanisms intact:
 | Optional contravariant `BASE` phantom | Tracks prefix parameters required by a route/group; a route requiring none fits anywhere, while `router()` only accepts items requiring none |
 | Plain mapped `JoinParams` | A conditional type collapses an unresolved `TBase` to `Params` during inference |
 | `NoInfer<TBase>` in route helpers | Prevents a separately declared handler from inferring `TBase` backwards and losing inference; retain the defensive `NoInfer` in `group()` too |
+| `NoInfer<T>` in the Bearer verifier return type | Lets the context key determine the principal type, preventing an unknown verifier result from widening it and bypassing validation |
 
 Phantom members are type-level only and are never set at runtime. The optional filter phantom keeps ordinary arrow functions assignable as filters. See [route groups](#route-groups-phase-2) for usage patterns.
 
@@ -167,6 +185,8 @@ Phantom members are type-level only and are never set at runtime. The optional f
 - Keep example-based regressions and the full type inference contract. fast-check adds generated inputs and shrinks failing cases; it does not replace integration or type tests.
 - `test/portable/arbitraries.ts` defines shared generators and `PROPERTY_OPTIONS` (seed `20261029`, 300 runs per property). Keep portable tests free of runtime globals, including when configuring randomness.
 - Properties cover parameter names and percent-decoding, route priority and registration order, `Allow` unions, group flattening and filter equivalence, malformed paths, path extraction, context-key isolation, filter order, and URLPattern equivalence. Generate matching and nonmatching paths so a property cannot pass by only checking 404s.
+- Problem-details properties cover status/header preservation, unchanged existing bodies, generic errors, and JSON extension round trips. Compare extensions after JSON normalization, which converts values such as `-0` to `0`.
+- Standard-filter properties cover CORS origin decisions and `Vary` merging, valid and malformed Bearer credentials, principal preservation, and logging of generated paths, statuses, and thrown values. Integration cases exercise preflights, authentication, problem responses, and final-status logging together.
 - Run routing properties with `bun run test --project portable router.property.test.ts`. All properties also run through the regular test commands and the four-runtime matrix.
 - To reproduce a failure, pass its printed `seed` and `path` to the failing `fc.assert` options. Keep the dependency version fixed, save the reduced input as a regression or an explicit `examples` entry, and remove the temporary replay `path` afterwards. To explore more inputs, temporarily change the shared seed and increase `numRuns`.
 - Reference results must be independent of the implementation. Use `Object.fromEntries` for expected parameter maps so `__proto__` becomes an own property. The URLPattern reference workaround is described under [Enforcement](#enforcement).
@@ -252,7 +272,7 @@ const routes = router(
   del('/users/:id', requireAdmin(deleteUser)), // route-level filter: wrap the handler
 )
 
-// Application-provided filters; package filters are still Phase 3 work.
+// Application-provided filters; standard alternatives are exported from oleo.js/filters.
 const app = compose(logger(), requireAuth())(routes)
 
 export default toFetch(app)
@@ -587,11 +607,11 @@ These are not part of the core. Compose them as filters or separate packages ins
 
 ## Standard filters (Phase 3)
 
-*Status: designed; not implemented yet.*
+*Status: all four filters are implemented and exported from `oleo.js/filters`, with runtime, property-based, composition, and type tests.*
 
 ### Common rules
 
-- **Location:** `src/filters/`, published as `oleo.js/filters`. The `exports` map gains `./filters` → `dist/filters/index.js`. These are portable packages: ECMA-262 and ECMA-429 only, with the same lint and type isolation as the core.
+- **Location:** `src/filters/`, exported as `oleo.js/filters`. The `exports` map includes `./filters` → `dist/filters/index.js`. These are portable packages: ECMA-262 and ECMA-429 only, with the same lint and type isolation as the core.
 - **Factories:** every filter is a factory (`cors(options)`, `bearerAuth(options)`, `problemDetails(options?)`, `requestLogger(options?)`) that returns an `HttpFilter`.
 - **Fail fast:** a factory validates its options and throws a `TypeError` immediately, never at request time.
 - **Tree-shaking:** named exports from one entry, and the package declares `sideEffects: false`. Unused filters drop out of bundles.
@@ -608,6 +628,8 @@ These are not part of the core. Compose them as filters or separate packages ins
 
 ### `cors(options)`
 
+Implemented in [`src/filters/cors.ts`](../src/filters/cors.ts), using the [Fetch CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol).
+
 ```ts
 interface CorsOptions {
   origin: '*' | string | readonly string[] | ((origin: string, req: Request) => boolean) // required
@@ -617,15 +639,19 @@ interface CorsOptions {
   credentials?: boolean             // default false
   maxAge?: number                   // seconds; default: header omitted
 }
+
+function cors<E = unknown>(options: CorsOptions): HttpFilter<E>
 ```
 
 - **`origin` is required.** There is no default; allowing every origin must be written as `origin: '*'`.
 - **Option validation:**
   - Each listed origin must be a serialized origin: `new URL(o).origin === o`, so `https://app.example.com/` with a trailing slash throws.
   - `credentials: true` with `origin: '*'` throws, because browsers reject that combination.
-  - `maxAge` must be a non-negative integer.
+  - `maxAge` must be a non-negative safe integer.
+  - Method and header lists must contain HTTP tokens; `credentials` must be a boolean. Arrays are copied into the configured policy, so later caller mutations do not change it.
 - **Requests without an `Origin` header** are not CORS requests and pass through untouched.
 - **A disallowed origin** passes through with no CORS processing at all; the browser then blocks it.
+- **Origin predicates** are synchronous and must explicitly return `true` to allow the origin. Predicate and downstream errors propagate.
 - **Preflight** is an `OPTIONS` request with both `Origin` and `Access-Control-Request-Method`. An allowed preflight is answered with `204` and never reaches `next`. The response carries:
   - `Access-Control-Allow-Origin`;
   - `Access-Control-Allow-Methods`;
@@ -638,14 +664,17 @@ interface CorsOptions {
   - `Access-Control-Allow-Credentials` when `credentials` is set;
   - `Access-Control-Expose-Headers` when configured;
   - `Vary: Origin`.
-- **`Access-Control-Allow-Origin` value:** `*` when the configured origin is `'*'`; otherwise the request's own `Origin`, echoed. Echoing requires `Vary: Origin`, plus `Access-Control-Request-Headers` when headers are reflected. `Vary` values are appended to any existing `Vary`, never replacing it.
+- **`Access-Control-Allow-Origin` value:** `*` when the configured origin is `'*'`; otherwise the request's own `Origin`, echoed. Allowed requests receive `Vary: Origin`, plus `Access-Control-Request-Headers` on preflights when headers are reflected. New `Vary` values are appended case-insensitively without duplicates, and an existing `Vary: *` is preserved.
+- **Response preservation:** normal responses keep their status, status text, and streaming body. Headers are copied; the configured policy replaces Allow-Origin, clears Allow-Credentials when credentials are disabled, and clears Expose-Headers when none are configured. Status-zero responses, including `Response.error()`, pass through because the native constructor cannot recreate them.
 - **Must wrap the whole router, never a group.** An `OPTIONS` preflight to a path without an `OPTIONS` route is an unmatched request, so group filters never see it (see [Group filters](#group-filters)).
 
 ### `bearerAuth(options)`
 
+Implemented in [`src/filters/bearer-auth.ts`](../src/filters/bearer-auth.ts), following [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.html).
+
 ```ts
 interface BearerAuthOptions<E = unknown, T = unknown> {
-  verify: (token: string, req: Request, ctx: Context<E>) => T | undefined | Promise<T | undefined>
+  verify: (token: string, req: Request, ctx: Context<E>) => NoInfer<T> | undefined | Promise<NoInfer<T> | undefined>
   key?: ContextKey<T>  // where to store the verified principal; omit to only verify
   realm?: string
 }
@@ -671,11 +700,14 @@ group('/api', { filters: [bearerAuth({ verify: (token, req, ctx: Context<Env>) =
 - **On success** it calls `next(req, key ? key.with(ctx, principal) : ctx)`. `verify` returns `undefined` to reject; any other value, including `null` or `false`, is the principal.
 - **`verify` may throw.** The error propagates to the error filter; it is never turned into a 401.
 - **The token is never logged or exposed.** Timing-safe comparison is the job of `verify`.
-- **`realm` validation:** it must be a valid quoted-string body, so `"`, `\`, and control characters throw.
-- **Env typing:** supply env information with `ctx: Context<Env>` in `verify`, or through contextual typing (for example, inside `router<Env>(group(…, { filters: [bearerAuth(…)] }))`). The type tests must cover both.
+- **Option validation:** `verify` is required and must be a function. A supplied key must expose the `ContextKey` interface. `realm` must be a quoted-string body representable in a native header, so `"`, `\`, control characters, and characters above U+00FF throw.
+- **Env typing:** supply env information with `ctx: Context<Env>` in `verify`, or through contextual typing (for example, inside `router<Env>(group(…, { filters: [bearerAuth(…)] }))`). Type tests cover both.
+- **Principal typing:** when a key is supplied, its type constrains the verifier's result. `NoInfer<T>` prevents an unknown result from widening the key's type; narrow unknown authentication data before returning it. Verification without a key does not expose a principal downstream.
 - **Placement:** per group or route is fine. Unmatched paths under the group then get 404, not 401 (see [Group filters](#group-filters)).
 
 ### `problemDetails(options?)`
+
+*Status: implemented in [`src/filters/problem-details.ts`](../src/filters/problem-details.ts), following [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html).*
 
 ```ts
 interface Problem {
@@ -692,22 +724,28 @@ interface ProblemDetailsOptions {
   emptyResponses?: boolean                                        // default true
   onError?: (error: unknown, req: Request) => void                // default: console.error(error)
 }
+
+function problemDetails<E = unknown>(options?: ProblemDetailsOptions): HttpFilter<E>
 ```
 
+- **Option validation:** options must be an object; `fromError` and `onError`, when supplied, must be functions, and `emptyResponses` must be a boolean. Invalid types throw `TypeError` when the factory is called.
 - **Thrown errors:** `next` is awaited inside `try`/`catch`. A thrown value becomes `fromError?.(error, req)`, or the default `{ status: 500 }` when that returns `undefined`.
   - **Rendered as** `application/problem+json`.
   - **No leaks:** the default problem never includes `error.message` or a stack.
-  - **Reporting:** `onError` runs for every error that ends up as a 5xx.
-  - **Invalid mappings:** if `fromError` throws or returns a status outside 400–599, the result is the default 500 and `onError` receives the original error.
-- **Empty error responses** (`emptyResponses: true`): a response with status ≥ 400 and a `null` body becomes a problem document with the same status, keeping every original header (`Allow`, `WWW-Authenticate`, CORS headers, …) and adding `Content-Type`.
+  - **Reporting:** `onError` runs for thrown errors that end up as a 5xx, with the original error and request. An empty 5xx response has no thrown error and does not trigger reporting.
+  - **Reporting failures:** exceptions and returned promise rejections from `onError` are reported through `console.error` without changing the chosen response. Reporting promises do not delay the response or extend the request lifetime.
+  - **Invalid mappings:** if `fromError` throws, returns a non-integer status or one outside 400–599, or produces an invalid/non-serializable problem, the result is the default 500 and `onError` receives the original error. Known text fields must be strings when supplied; a root `toJSON` method is rejected because it could override the document's status.
+- **Empty error responses** (`emptyResponses: true`): a response with status ≥ 400 and a `null` body becomes a problem document with the same status and status text. Headers are copied, preserving `Allow`, `WWW-Authenticate`, CORS headers, and other fields. `Content-Type` is set to `application/problem+json`; stale `Content-Length` and `Content-Encoding` are removed because the representation has changed.
   - This covers the router's default 404/405/400 and `bearerAuth`'s 401/400.
   - A response with any body, even an empty string, is left alone. Handlers that return their own error bodies are never rewritten.
-- **`HEAD` requests never get a body.** For a `HEAD` request the status and headers are converted, and the body stays `null`. The router strips bodies from `HEAD` responses, so without this rule every `HEAD` 404 would gain a body.
-- **Reason phrases:** ECMA-429 has no table of reason phrases, so `src/filters/` ships its own for 400–511. For an unknown status, `title` is omitted.
+- **Generated `HEAD` responses never get a body.** For a `HEAD` request the status and headers are converted, and the body stays `null`. The router strips bodies from `HEAD` responses, so without this rule every `HEAD` 404 would gain a body.
+- **Reason phrases:** ECMA-429 has no table of reason phrases, so `src/filters/` ships its own for registered error statuses through 511, based on the [IANA registry](https://www.iana.org/assignments/http-status-codes/). For an unused or unassigned status, `title` is omitted unless explicitly supplied.
 - **Out of scope:** an error raised while a body is already streaming cannot be converted, because the headers are already sent.
 - **No error class.** The package exports no throwable `HttpProblem`, since that would be a response builder in disguise (see [Non-goals](#non-goals)). Map your own error types with `fromError`.
 
 ### `requestLogger(options?)`
+
+Implemented in [`src/filters/request-logger.ts`](../src/filters/request-logger.ts).
 
 ```ts
 interface LogEntry {
@@ -723,15 +761,19 @@ interface RequestLoggerOptions {
   log?: (entry: LogEntry) => void                                                // default: console.log(JSON.stringify(entry))
   fields?: (req: Request, res: Response | undefined) => Record<string, unknown> // extra fields; res is undefined on error
 }
+
+function requestLogger<E = unknown>(options?: RequestLoggerOptions): HttpFilter<E>
 ```
 
+- **Option validation:** options must be an object; supplied `log` and `fields` callbacks must be functions. `fields` returns its record synchronously.
 - **One entry per request,** logged when `next` settles. Timing uses `performance.now()`.
   - **What is timed:** only the time until the handler returns its `Response`; body streaming is not included.
   - **On `workerd`,** time advances only across I/O (a Spectre mitigation), so durations of CPU-only handlers read as `0`.
 - **Path:** extracted with `pathStart`/`pathEnd`, so it is the raw, still-encoded path, and the query string is never logged.
 - **On a throw** it logs `{ error: true }` without `status`, then rethrows. It never swallows errors.
-- **Isolation:** an error thrown by `log` or `fields` is reported with `console.error` and never affects the response. `fields` cannot override the core fields; the core fields win.
+- **Isolation:** an error thrown by `log` or `fields` is reported with `console.error` and never affects the response or original thrown value. If `fields` fails, the core entry is still logged. Returned logging promise rejections are also reported, without delaying the response or extending the request lifetime.
+- **Core fields win:** additional fields are copied without mutating the caller's record. They cannot override method, path, status, duration, or error, including the absence of status/error on the corresponding outcome. A functional root `toJSON` is removed so it cannot replace the serialized core entry.
 
 ### Contract
 
-When implementing, add type tests for each factory's option types and env inference, especially `bearerAuth`'s `E` and `T`. Add runtime tests for every row and rule above. Every filter's tests run on all four runtimes.
+Runtime and property-based tests live in `test/portable/filters/` and run on Node, Bun, workerd, and Deno. Composition tests verify preflight bypass, authenticated routes, empty error conversion, CORS on errors, bodyless HEAD responses, and final-status logging. `test/types/filters.test-d.ts` covers factory options, environment/parameter preservation, and Bearer principal compatibility, including rejection of unknown or incompatible verifier results.
