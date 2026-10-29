@@ -2,6 +2,7 @@
   "name": "oleo.js",
   "version": "0.0.0",
   "description": "Zero-dependency HTTP router and middleware for WinterTC runtimes",
+  "license": "MIT",
   "type": "module",
   "sideEffects": false,
   "files": [
