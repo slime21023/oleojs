@@ -1,3 +1,4 @@
+/** Decoded route parameters, including a terminal wildcard under the `'*'` key. */
 export type Params = Readonly<Record<string, string>>
 
 type SegmentParams<TSegment extends string> =
@@ -9,41 +10,51 @@ type PatternParams<TPattern extends string> =
   TPattern extends `${infer Head}/${infer Rest}` ? SegmentParams<Head> & PatternParams<Rest>
   : SegmentParams<TPattern>
 
-// `'/users/:id/*'` yields `{ readonly id: string; readonly '*': string }`.
+/**
+ * Infer parameter names from a literal route pattern; a general `string` yields {@link Params}.
+ * For example, `ParamsOf<'/users/:id/*'>` has readonly `id` and `'*'` string properties.
+ */
 export type ParamsOf<TPattern extends string> =
   string extends TPattern ? Params
   : { readonly [K in keyof PatternParams<TPattern> & string]: string }
 
-// Must stay a plain mapped type: a conditional would collapse a still-unresolved
-// `A` to `Params` during inference (see docs/project-reference.md, Route groups > Types).
+// A conditional type would widen unresolved group parameters to Params during inference.
 export type JoinParams<A extends Params, B extends Params> =
   { readonly [K in (keyof A | keyof B) & string]: string }
 
+/** Background-task support modeled on Workers; this is an oleo.js interface. */
 export interface ExecutionContext {
+  /** Register background work; extending the request lifetime depends on the host. */
   waitUntil(promise: Promise<unknown>): void
 }
 
+/** Request data passed through handlers and filters; add values by deriving a new context. */
 export interface Context<E = unknown, P extends Params = Params> {
+  /** Decoded route parameters; empty at the Fetch entry point. */
   readonly params: P
+  /** Runtime or caller data. An omitted environment remains `undefined` at runtime. */
   readonly env: E
+  /** Host background-task support, or a fallback that only reports rejected promises. */
   readonly executionCtx: ExecutionContext
 }
 
+/** Handle a native Web request with typed environment data and route parameters. */
 export type HttpHandler<E = unknown, P extends Params = Params> =
   (req: Request, ctx: Context<E, P>) => Response | Promise<Response>
 
-// Type-level only: never set at run time.
+// Generic constraints alone allow incompatible environments; this type-only marker rejects them.
 declare const FILTER_ENV: unique symbol
 
-// A filter requiring env `E` applies to any handler whose env satisfies `E`.
-// TypeScript ignores type-parameter constraints when relating generic signatures, so the
-// phantom `FILTER_ENV` member carries `E` contravariantly: without it, an `HttpFilter<Env>`
-// would be assignable to `HttpFilter<OtherEnv>`.
-// Contract: test/types/inference.test-d.ts, "filters" rejection cases.
+/**
+ * Middleware requiring environment `E`, while preserving the wrapped handler's parameter types.
+ * It can wrap any handler whose environment satisfies `E`, including a more specific environment.
+ */
 export type HttpFilter<E = unknown> =
   (<TEnv extends E, P extends Params>(next: HttpHandler<TEnv, P>) => HttpHandler<TEnv, P>)
   & { readonly [FILTER_ENV]?: (env: E) => void }
 
+/** A Fetch entry point following the Workers call shape, usable by runtimes and adapters. */
 export interface FetchHandler<E = unknown> {
+  /** Handle a request; `toFetch` creates a context from these arguments and always returns a promise. */
   fetch(request: Request, env?: E, executionCtx?: ExecutionContext): Promise<Response>
 }

@@ -6,15 +6,22 @@ import { STUB_EXECUTION_CTX } from '../context-defaults.ts'
 import { FORBIDDEN_METHODS } from '../http-method.ts'
 import type { FetchHandler } from '../types.ts'
 
+/** Application data and proxy handling for the Node.js adapter. */
 export interface NodeListenerOptions<E = unknown> {
+  /** Forwarded as the application's environment on every request. */
   env?: E
-  // Take the scheme and host from X-Forwarded-Proto / X-Forwarded-Host. Enable only behind
-  // a proxy that always sets or strips them.
+  /**
+   * Use the first X-Forwarded-Proto and X-Forwarded-Host values for path-only request targets.
+   * Defaults to false. Enable only behind a proxy that always sets or strips these headers.
+   */
   trustProxy?: boolean
 }
 
+/** Incoming request from Node's HTTP/1.1 or HTTP/2 compatibility API. */
 export type NodeRequest = IncomingMessage | Http2ServerRequest
+/** Server response from Node's HTTP/1.1 or HTTP/2 compatibility API. */
 export type NodeResponse = ServerResponse | Http2ServerResponse
+/** Listener suitable for a Node.js server's `request` event. */
 export type NodeListener = (req: NodeRequest, res: NodeResponse) => void
 
 // Connection-specific headers are invalid in HTTP/2 responses.
@@ -22,6 +29,16 @@ const HTTP2_CONNECTION_HEADERS = new Set(['connection', 'keep-alive', 'transfer-
 // Characters that would let a Host value change the path or authority of the request URL.
 const UNSAFE_HOST = /[/\\?#@\s]/
 
+/**
+ * Adapt a Fetch application to a Node.js HTTP/1.1 or HTTP/2 compatibility server.
+ * Streams request and response bodies with backpressure, and aborts the Web request's
+ * signal when the client disconnects before the response finishes.
+ *
+ * Invalid request conversion returns 400; methods forbidden by Fetch return 501.
+ * Application and response failures are reported through `console.error`, returning 500
+ * before headers are sent or destroying the response after they are sent.
+ * Server startup and shutdown remain the caller's responsibility.
+ */
 export function toNodeListener<E>(app: FetchHandler<E>, options: NodeListenerOptions<E> = {}): NodeListener {
   const { env, trustProxy = false } = options
   return (req, res) => {
@@ -80,8 +97,7 @@ function toRequest(req: NodeRequest, trustProxy: boolean, signal: AbortSignal): 
     host = firstValue(req.headers['x-forwarded-host']) ?? host
   }
 
-  // Origin-form targets are joined with the host; anything else (absolute-form, or an
-  // unsupported form such as `*`) is left to the Request constructor to accept or reject.
+  // Request needs an absolute URL; other target forms are left to its constructor to validate.
   const target = req.url ?? ''
   let url = target
   if (target.startsWith('/')) {
@@ -93,6 +109,7 @@ function toRequest(req: NodeRequest, trustProxy: boolean, signal: AbortSignal): 
   const raw = req.rawHeaders
   for (let i = 0; i < raw.length; i += 2) {
     const name = raw[i]!
+    // HTTP/2 pseudo-headers belong to request metadata, not Web Headers.
     if (!name.startsWith(':')) headers.append(name, raw[i + 1]!)
   }
 
@@ -127,6 +144,7 @@ async function writeResponse(response: Response, req: NodeRequest, res: NodeResp
   for (const [name, value] of response.headers) {
     if (name !== 'set-cookie' && !(http2 && HTTP2_CONNECTION_HEADERS.has(name))) headers[name] = value
   }
+  // Set-Cookie values must stay separate because commas can occur inside individual cookies.
   const cookies = response.headers.getSetCookie()
   if (cookies.length > 0) headers['set-cookie'] = cookies
 
@@ -141,8 +159,7 @@ async function writeResponse(response: Response, req: NodeRequest, res: NodeResp
 
   return new Promise((resolve, reject) => {
     pipeline(Readable.fromWeb(body as unknown as NodeReadableStream), res, (error) => {
-      // A client disconnect surfaces as a premature close; that is not a server error. Do not
-      // test `signal.aborted` here: a failing body also destroys `res`, which aborts the signal.
+      // Body errors also abort the signal; only premature close is treated as a client disconnect.
       if (error && (error as { code?: unknown }).code !== 'ERR_STREAM_PREMATURE_CLOSE') reject(error)
       else resolve()
     })

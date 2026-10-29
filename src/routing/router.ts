@@ -9,15 +9,26 @@ import { MALFORMED, Trie } from './trie.ts'
 
 function withoutBody(res: Response): Response | Promise<Response> {
   if (res.body === null) return res
+  // Await cancellation so cleanup failures reach the caller instead of becoming unhandled rejections.
   return res.body.cancel().then(() =>
     new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers }),
   )
 }
 
+/**
+ * Build a handler from routes and groups, validating their full patterns during construction.
+ * Matching tries static segments, parameters, then wildcards for the request method.
+ *
+ * Returns an empty 404 for an unknown path, 405 with Allow for an unsupported method,
+ * or 400 for malformed parameter encoding in the selected route. HEAD can fall back to GET
+ * and always removes the response body. Handler and filter errors propagate to the caller.
+ *
+ * @throws {TypeError} If items, methods, or full patterns are invalid, or routes conflict.
+ */
 export function router<E = unknown>(...items: RouteItem<E, {}>[]): HttpHandler<E> {
   const trie = new Trie<HttpHandler<E, any>>()
 
-  // Collect filters outermost first, then compose once per route during construction.
+  // Build group wrappers once per route so requests only run the already-composed handler.
   const add = (item: unknown, prefix: string, inheritedFilters: readonly HttpFilter<E>[]): void => {
     const kind = getRouteKind(item)
     if (kind === 'route') {
@@ -47,6 +58,7 @@ export function router<E = unknown>(...items: RouteItem<E, {}>[]): HttpHandler<E
     }
     if (handler === MALFORMED) return new Response(null, { status: 400 })
 
+    // Snapshot the match before a handler can invoke this router again.
     const params = trie.params
     const res = handler(req, params === EMPTY_PARAMS ? ctx : { ...ctx, params })
     if (method !== 'HEAD') return res

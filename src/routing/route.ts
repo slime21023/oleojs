@@ -1,14 +1,15 @@
 import type { HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from '../types.ts'
 
-// Type-level only: never set at run time.
+// Makes missing group parameters a type error; this marker never exists at runtime.
 declare const BASE: unique symbol
 
-// Tags the values built by the route helpers and `group()`, so `group()` can tell an
-// options object from an item and `router()` can reject anything else.
+// Distinguish route/group values from options without relying on their public fields.
 const KIND = Symbol('oleo.kind')
 
-// `TBase` is the set of prefix params this route expects from enclosing groups. The phantom
-// `BASE` member carries it contravariantly: a route expecting nothing fits anywhere.
+/**
+ * An immutable route definition created by the route helpers and validated by `router()`.
+ * `TBase` describes parameters that enclosing groups must supply.
+ */
 export interface Route<E = unknown, TBase extends Params = {}> {
   readonly method: string
   readonly pattern: string
@@ -17,14 +18,24 @@ export interface Route<E = unknown, TBase extends Params = {}> {
   readonly [BASE]?: (base: TBase) => void
 }
 
+/**
+ * Routes sharing a prefix and filters, with `TBase` supplied by enclosing groups.
+ * Annotate separately declared groups as `RouteGroup<Env>` to infer prefix parameters in handlers.
+ */
 export interface RouteGroup<E = unknown, TBase extends Params = {}> {
   readonly prefix: string
+  /** Filters in outermost-first order, applied after routing supplies the full parameters. */
   readonly filters: readonly HttpFilter<E>[]
   readonly items: readonly (Route<E, any> | RouteGroup<E, any>)[]
   readonly [BASE]?: (base: TBase) => void
 }
 
+/** Middleware shared by the matched routes of a group, including nested groups. */
 export interface GroupOptions<E = unknown> {
+  /**
+   * Wrap each route with the first filter outermost. Wrappers are built once per route
+   * during router construction; unmatched requests skip these filters.
+   */
   readonly filters?: readonly HttpFilter<E>[]
 }
 
@@ -34,12 +45,16 @@ export function getRouteKind(value: unknown): 'route' | 'group' | undefined {
   return typeof value === 'object' && value !== null ? (value as { [KIND]?: 'route' | 'group' })[KIND] : undefined
 }
 
-// `NoInfer` keeps `TBase` from being inferred backwards from the handler, where it would
-// degrade to `Params`; it comes only from the enclosing group or router.
-// Contract: test/types/inference.test-d.ts, "accepts separately declared handlers typed with their full params".
+/**
+ * Create an immutable route for an HTTP method, with parameters inferred from its pattern.
+ * Patterns support static segments, `:name` parameters, and a terminal `*` wildcard.
+ * Inside a group, `''` addresses the group prefix itself. Method and pattern validation
+ * happens when the route is passed to `router()`.
+ */
 export function route<E = unknown, TPattern extends string = string, TBase extends Params = {}>(
   method: string,
   pattern: TPattern,
+  // NoInfer keeps a separately typed handler from widening the enclosing group's parameters.
   handler: HttpHandler<E, JoinParams<NoInfer<TBase>, ParamsOf<TPattern>>>,
 ): Route<E, TBase> {
   return Object.freeze({ [KIND]: 'route' as const, method, pattern, handler })
@@ -52,20 +67,35 @@ function methodHelper(method: string) {
   ): Route<E, TBase> => route(method, pattern, handler)
 }
 
+/** Create a GET route with inferred path parameters. */
 export const get = methodHelper('GET')
+/** Create a POST route with inferred path parameters. */
 export const post = methodHelper('POST')
+/** Create a PUT route with inferred path parameters. */
 export const put = methodHelper('PUT')
+/** Create a PATCH route with inferred path parameters. */
 export const patch = methodHelper('PATCH')
-// `delete` is a reserved word.
+/** Create a DELETE route; named `del` because `delete` is a reserved word. */
 export const del = methodHelper('DELETE')
+/** Create an explicit HEAD route; the router removes any response body. */
 export const head = methodHelper('HEAD')
+/** Create an explicit OPTIONS route. */
 export const options = methodHelper('OPTIONS')
 
-// Builds a value only; prefixes are joined and checked when `router()` is called.
+/**
+ * Group routes under a prefix, carrying its parameters into nested handlers.
+ * Prefixes are concatenated and full patterns validated when `router()` is called.
+ * An empty child pattern matches the prefix itself; `'/'` adds a trailing slash.
+ */
 export function group<E = unknown, TPrefix extends string = string, TBase extends Params = {}>(
   prefix: TPrefix,
   ...items: RouteItem<E, JoinParams<NoInfer<TBase>, ParamsOf<TPrefix>>>[]
 ): RouteGroup<E, TBase>
+/**
+ * Group routes under a prefix with shared filters, carrying its parameters into nested handlers.
+ * Filters wrap each matched route, outer groups first; unmatched requests skip them.
+ * Prefixes and full patterns are validated when `router()` is called.
+ */
 export function group<E = unknown, TPrefix extends string = string, TBase extends Params = {}>(
   prefix: TPrefix,
   options: GroupOptions<E>,

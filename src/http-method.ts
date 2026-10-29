@@ -4,6 +4,10 @@ const NORMALIZED_METHODS = new Set(['DELETE', 'GET', 'HEAD', 'OPTIONS', 'POST', 
 // Fetch refuses to construct requests with these methods (in any casing).
 export const FORBIDDEN_METHODS: ReadonlySet<string> = new Set(['CONNECT', 'TRACE', 'TRACK'])
 
+/**
+ * Reject route methods that native Fetch requests cannot represent.
+ * @throws {TypeError} For invalid tokens, forbidden methods, or casing that Fetch normalizes away.
+ */
 export function checkMethod(method: string, pattern: string): void {
   const description = `Invalid route method "${method}" for "${pattern}"`
   if (!TOKEN.test(method)) {
