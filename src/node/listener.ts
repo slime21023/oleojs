@@ -67,7 +67,12 @@ function firstValue(header: string | string[] | undefined): string | undefined {
 
 function toRequest(req: NodeRequest, trustProxy: boolean, signal: AbortSignal): Request {
   const http2 = req instanceof Http2ServerRequest
-  let scheme = http2 ? req.scheme : 'encrypted' in req.socket && req.socket.encrypted === true ? 'https' : 'http'
+  let scheme = 'http'
+  if (http2) {
+    scheme = req.scheme
+  } else if ('encrypted' in req.socket && req.socket.encrypted === true) {
+    scheme = 'https'
+  }
   let host = http2 ? req.authority : req.headers.host
   if (trustProxy) {
     const proto = firstValue(req.headers['x-forwarded-proto'])?.toLowerCase()
@@ -99,6 +104,7 @@ function toRequest(req: NodeRequest, trustProxy: boolean, signal: AbortSignal): 
 }
 
 function respondEmpty(res: NodeResponse, status: number): void {
+  // Narrow each protocol separately: their writeHead overloads cannot be called as a union.
   if (res instanceof Http2ServerResponse) res.writeHead(status)
   else res.writeHead(status)
   res.end()

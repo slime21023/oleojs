@@ -78,6 +78,26 @@ describe('definition errors', () => {
 })
 
 describe('group filters', () => {
+  it('leaves nested filters in reverse order after the handler returns', async () => {
+    const log: string[] = []
+    const around = (name: string): HttpFilter => (next) => async (req, ctx) => {
+      log.push(`${name} in`)
+      const res = await next(req, ctx)
+      log.push(`${name} out`)
+      return res
+    }
+    const app = router(group('/a', { filters: [around('outer')] },
+      group('/b', { filters: [around('inner')] },
+        get('/c', () => {
+          log.push('handler')
+          return new Response('ok')
+        }),
+      ),
+    ))
+    expect(await (await call(app, '/a/b/c')).text()).toBe('ok')
+    expect(log).toEqual(['outer in', 'inner in', 'handler', 'inner out', 'outer out'])
+  })
+
   function tracing(name: string, log: string[]): HttpFilter {
     return (next) => async (req, ctx) => {
       log.push(name)

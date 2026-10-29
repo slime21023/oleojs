@@ -40,13 +40,17 @@ const NORMALIZED_METHODS = new Set(['DELETE', 'GET', 'HEAD', 'OPTIONS', 'POST', 
 export const FORBIDDEN_METHODS: ReadonlySet<string> = new Set(['CONNECT', 'TRACE', 'TRACK'])
 
 function checkMethod(method: string, pattern: string): void {
-  const reason =
-    !TOKEN.test(method) ? 'is not a valid HTTP method'
-    : FORBIDDEN_METHODS.has(method.toUpperCase()) ? 'is forbidden by Fetch and can never match'
-    : NORMALIZED_METHODS.has(method.toUpperCase()) && method !== method.toUpperCase()
-      ? `can never match; Fetch normalizes it to "${method.toUpperCase()}"`
-    : undefined
-  if (reason !== undefined) throw new TypeError(`Invalid route method "${method}" for "${pattern}": ${reason}`)
+  const description = `Invalid route method "${method}" for "${pattern}"`
+  if (!TOKEN.test(method)) {
+    throw new TypeError(`${description}: is not a valid HTTP method`)
+  }
+  const normalized = method.toUpperCase()
+  if (FORBIDDEN_METHODS.has(normalized)) {
+    throw new TypeError(`${description}: is forbidden by Fetch and can never match`)
+  }
+  if (NORMALIZED_METHODS.has(normalized) && method !== normalized) {
+    throw new TypeError(`${description}: can never match; Fetch normalizes it to "${normalized}"`)
+  }
 }
 
 function kindOf(value: unknown): 'route' | 'group' | undefined {
@@ -55,6 +59,7 @@ function kindOf(value: unknown): 'route' | 'group' | undefined {
 
 // `NoInfer` keeps `TBase` from being inferred backwards from the handler, where it would
 // degrade to `Params`; it comes only from the enclosing group or router.
+// Contract: test/types/inference.test-d.ts, "accepts separately declared handlers typed with their full params".
 export function route<E = unknown, TPattern extends string = string, TBase extends Params = {}>(
   method: string,
   pattern: TPattern,
@@ -108,28 +113,25 @@ function withoutBody(res: Response): Response | Promise<Response> {
   )
 }
 
-type Wrap<E> = (handler: HttpHandler<E, any>) => HttpHandler<E, any>
-
 export function router<E = unknown>(...items: Item<E, {}>[]): HttpHandler<E> {
   const trie = new Trie<HttpHandler<E, any>>()
 
-  // Joins prefixes outermost first; outer group filters wrap inner ones.
-  const add = (item: unknown, prefix: string, wrap: Wrap<E>): void => {
+  // Collect filters outermost first, then compose once per route during construction.
+  const add = (item: unknown, prefix: string, inheritedFilters: readonly HttpFilter<E>[]): void => {
     const kind = kindOf(item)
     if (kind === 'route') {
       const { method, pattern, handler } = item as Route<E, any>
       checkMethod(method, prefix + pattern)
-      trie.insert(method, prefix + pattern, wrap(handler))
+      trie.insert(method, prefix + pattern, compose(...inheritedFilters)(handler))
     } else if (kind === 'group') {
-      const { prefix: own, filters, items } = item as RouteGroup<E, any>
-      const filter = compose(...filters)
-      const inner: Wrap<E> = filters.length === 0 ? wrap : (handler) => wrap(filter(handler))
-      for (const child of items) add(child, prefix + own, inner)
+      const { prefix: groupPrefix, filters, items: children } = item as RouteGroup<E, any>
+      const combinedFilters = [...inheritedFilters, ...filters]
+      for (const child of children) add(child, prefix + groupPrefix, combinedFilters)
     } else {
       throw new TypeError(`router() expects routes and groups${prefix ? ` (in group "${prefix}")` : ''}, got ${String(item)}`)
     }
   }
-  for (const item of items) add(item, '', (handler) => handler)
+  for (const item of items) add(item, '', [])
 
   return (req, ctx) => {
     const { url, method } = req

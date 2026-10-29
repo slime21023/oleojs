@@ -1,9 +1,44 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { get, group, route, router, toFetch } from '../../src/index.ts'
+import { compose, get, group, route, router, toFetch } from '../../src/index.ts'
+import type { HttpFilter, HttpHandler } from '../../src/index.ts'
 import { PROPERTY_OPTIONS, paramNameArbitrary, paramValueArbitrary, staticSegmentArbitrary } from './arbitraries.ts'
 
 describe('routing properties', () => {
+  it('makes nested group filters equivalent to composing them on the full route', async () => {
+    const names = fc.array(fc.string(), { maxLength: 5 })
+    await fc.assert(fc.asyncProperty(names, names, paramValueArbitrary, async (outer, inner, id) => {
+      const groupedLog: string[] = []
+      const flatLog: string[] = []
+      const filters = (names: string[], log: string[]): HttpFilter[] => names.map((name): HttpFilter =>
+        (next) => async (req, ctx) => {
+          log.push(`${name} in`)
+          const res = await next(req, ctx)
+          log.push(`${name} out`)
+          return res
+        },
+      )
+      const handler = (log: string[]): HttpHandler => (_req, ctx) => {
+        log.push('handler')
+        return Response.json(ctx.params)
+      }
+      const grouped = toFetch(router(group('/api', { filters: filters(outer, groupedLog) },
+        group('/users', { filters: filters(inner, groupedLog) }, get('/:id', handler(groupedLog))),
+      )))
+      const combined = [...outer, ...inner]
+      const flat = toFetch(router(get('/api/users/:id', compose(...filters(combined, flatLog))(handler(flatLog)))))
+      const url = `https://test/api/users/${encodeURIComponent(id)}`
+      expect(await (await grouped.fetch(new Request(url))).json()).toEqual({ id })
+      expect(await (await flat.fetch(new Request(url))).json()).toEqual({ id })
+      expect(groupedLog).toEqual(flatLog)
+      expect(groupedLog).toEqual([
+        ...combined.map((name) => `${name} in`),
+        'handler',
+        ...combined.toReversed().map((name) => `${name} out`),
+      ])
+    }), PROPERTY_OPTIONS)
+  })
+
   it('preserves own parameter names and decodes values exactly once', async () => {
     await fc.assert(fc.asyncProperty(paramNameArbitrary, paramValueArbitrary, async (name, value) => {
       const app = toFetch(router(get(`/users/:${name}`, (_req, ctx) => {

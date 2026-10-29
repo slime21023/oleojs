@@ -127,7 +127,7 @@ export class Trie<T> {
   allow(url: string, start: number, end: number): string[] {
     const methods = new Set<string>()
     if (start < end && url.charCodeAt(start) === CHAR_SLASH) {
-      this.#collect(this.#root, url, start + 1, end, methods)
+      this.#collectAllowedMethods(this.#root, url, start + 1, end, methods)
     }
     if (methods.has('GET')) methods.add('HEAD')
     return [...methods].sort()
@@ -160,7 +160,7 @@ export class Trie<T> {
       for (let i = 0; i < bucket.length; i++) {
         const child = bucket[i]!
         if (child.segment.length === segEnd - segStart && url.startsWith(child.segment, segStart)) {
-          const found = this.#next(child, method, url, segEnd, last, end)
+          const found = this.#matchChild(child, method, url, segEnd, last, end)
           if (found !== undefined) return found
           break // segments within a bucket are distinct
         }
@@ -169,7 +169,7 @@ export class Trie<T> {
 
     const param = node.param
     if (param !== undefined && segEnd > segStart) {
-      const found = this.#next(param, method, url, segEnd, last, end)
+      const found = this.#matchChild(param, method, url, segEnd, last, end)
       if (found !== undefined) {
         this.#capture(param.name, url, segStart, segEnd)
         return found
@@ -178,21 +178,21 @@ export class Trie<T> {
 
     const wildcard = node.wildcard
     if (wildcard !== undefined && handlerFor(wildcard, method) !== undefined) {
-      this.#select(wildcard)
+      this.#initializeParams(wildcard)
       this.#capture('*', url, segStart, end)
       return wildcard
     }
     return undefined
   }
 
-  #next(child: Node<T>, method: string, url: string, segEnd: number, last: boolean, end: number): Node<T> | undefined {
+  #matchChild(child: Node<T>, method: string, url: string, segEnd: number, last: boolean, end: number): Node<T> | undefined {
     if (!last) return this.#descend(child, method, url, segEnd + 1, end)
     if (handlerFor(child, method) === undefined) return undefined
-    this.#select(child)
+    this.#initializeParams(child)
     return child
   }
 
-  #select(terminal: Node<T>): void {
+  #initializeParams(terminal: Node<T>): void {
     // Parameter names such as __proto__ must be ordinary own properties.
     this.params = terminal.hasParams ? Object.create(null) : EMPTY_PARAMS
   }
@@ -213,13 +213,13 @@ export class Trie<T> {
     }
   }
 
-  #collect(node: Node<T>, url: string, segStart: number, end: number, methods: Set<string>): void {
+  #collectAllowedMethods(node: Node<T>, url: string, segStart: number, end: number, methods: Set<string>): void {
     let segEnd = segStart
     while (segEnd < end && url.charCodeAt(segEnd) !== CHAR_SLASH) segEnd++
     const last = segEnd === end
     const visit = (child: Node<T>) => {
       if (last) for (const method of child.handlers.keys()) methods.add(method)
-      else this.#collect(child, url, segEnd + 1, end, methods)
+      else this.#collectAllowedMethods(child, url, segEnd + 1, end, methods)
     }
 
     const bucket = node.statics.get(segStart === segEnd ? EMPTY_SEGMENT : url.charCodeAt(segStart))

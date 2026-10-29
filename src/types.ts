@@ -39,6 +39,7 @@ declare const FILTER_ENV: unique symbol
 // TypeScript ignores type-parameter constraints when relating generic signatures, so the
 // phantom `FILTER_ENV` member carries `E` contravariantly: without it, an `HttpFilter<Env>`
 // would be assignable to `HttpFilter<OtherEnv>`.
+// Contract: test/types/inference.test-d.ts, "filters" rejection cases.
 export type HttpFilter<E = unknown> =
   (<TEnv extends E, P extends Params>(next: HttpHandler<TEnv, P>) => HttpHandler<TEnv, P>)
   & { readonly [FILTER_ENV]?: (env: E) => void }
