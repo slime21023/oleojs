@@ -4,7 +4,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 import { compose } from '../../src/compose.ts'
 import { contextKey } from '../../src/context-key.ts'
 import { toFetch } from '../../src/fetch.ts'
-import { type RouteGroup, get, group, router } from '../../src/router.ts'
+import { type RouteGroup, get, group, router } from '../../src/index.ts'
 import type { FetchHandler, HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from '../../src/types.ts'
 
 interface Env {

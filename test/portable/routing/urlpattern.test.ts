@@ -3,9 +3,9 @@
 // with the same parameter values once URLPattern's are decoded and its `'0'` is named `'*'`.
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { pathEnd, pathStart } from '../../src/path.ts'
-import { MALFORMED, Trie } from '../../src/trie.ts'
-import { PROPERTY_OPTIONS, paramNameArbitrary, paramValueArbitrary, staticSegmentArbitrary } from './arbitraries.ts'
+import { pathEnd, pathStart } from '../../../src/path.ts'
+import { MALFORMED, Trie } from '../../../src/routing/trie.ts'
+import { PROPERTY_OPTIONS, paramNameArbitrary, paramValueArbitrary, staticSegmentArbitrary } from '../arbitraries.ts'
 
 const PATTERNS = [
   '/',

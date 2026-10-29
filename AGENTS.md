@@ -10,12 +10,12 @@ The Phase 1 specification is complete, and the project skeleton described in [De
 
 - The core types (`src/types.ts`).
 - Path extraction (`src/path.ts`).
-- The trie (`src/trie.ts`).
-- `router`, the route helpers, and the HTTP semantics (`src/router.ts`).
+- The trie (`src/routing/trie.ts`).
+- Route definitions and helpers (`src/routing/route.ts`), `router` and HTTP semantics (`src/routing/router.ts`).
 - `toFetch` (`src/fetch.ts`), `compose` (`src/compose.ts`), and `contextKey` (`src/context-key.ts`).
-- The differential `URLPattern` tests (`test/portable/urlpattern.test.ts`).
+- The differential `URLPattern` tests (`test/portable/routing/urlpattern.test.ts`).
 - The Node adapter `oleo.js/node` (`src/node/listener.ts`).
-- Route groups: `group` (`src/router.ts`).
+- Route groups: `group` (`src/routing/route.ts`), flattened by `src/routing/router.ts`.
 
 **Phases 1 and 2 are complete.** Phase 3 is designed (see [Standard filters](#standard-filters-phase-3)) and is the next step. Items listed under [Open decisions](#open-decisions) are not settled — ask before implementing them.
 
@@ -66,25 +66,30 @@ src/
   index.ts                  # `oleo.js` entry: public exports only
   types.ts                  # core types (see Core API)
   path.ts                   # path bounds within request.url
-  trie.ts                   # segment trie: definition checks, matching, Allow lists
-  router.ts                 # Route, RouteGroup, route helpers, group, router, default responses
-  fetch.ts                  # toFetch, the executionCtx stub
+  fetch.ts                  # toFetch: creates the per-request context
   compose.ts                # compose
   context-key.ts            # contextKey
   context-defaults.ts       # shared EMPTY_PARAMS and executionCtx stub
   http-method.ts            # method validation and Fetch-forbidden methods
   <module>.ts               # core modules (kebab-case)
+  routing/
+    route.ts                # immutable Route/RouteGroup values, helpers, group, internal kind checks
+    router.ts               # group flattening, filter composition, dispatch, default responses
+    trie.ts                 # segment trie: definition checks, matching, Allow lists
   node/
     index.ts                # `oleo.js/node` entry
     listener.ts             # toNodeListener: ingress, egress, errors, disconnects
 test/
   portable/
     <module>.test.ts        # portable runtime tests, including generated properties
-    router.property.test.ts # routing properties through the public API
     arbitraries.ts          # shared input generators and deterministic run settings
-    group.test.ts           # route group flattening, filters, definition errors
-    urlpattern.test.ts      # corpus and generated URLPattern differential tests
     runtime-baseline.test.ts # checks the runtime assumptions the core relies on
+    routing/
+      router.test.ts        # route helpers, dispatch, HTTP semantics
+      router.property.test.ts # routing and grouped-filter properties through the public API
+      group.test.ts         # route group flattening, filters, definition errors
+      trie.test.ts          # matching, parameter decoding, definition errors
+      urlpattern.test.ts    # corpus and generated URLPattern differential tests
   node/
     listener.test.ts        # real HTTP/1.1 and HTTP/2 servers
   types/
@@ -95,6 +100,11 @@ vitest.workers.config.ts    # portable tests inside workerd
 tsconfig.json / tsconfig.node.json / tsconfig.build.json
 dist/                       # build output, not committed
 ```
+
+- `src/index.ts` and `src/node/index.ts` are the public export boundaries. Internal modules import their dependencies directly; no internal barrel is needed under `routing/`.
+- `routing/route.ts` only creates immutable values and owns their internal tags. Validation and filter application stay in `router()`; do not move them into route helpers or `group()`.
+- Shared context defaults and HTTP method rules live outside `routing/`, so `fetch.ts` and the Node adapter do not depend on routing implementation modules.
+- Keep the inference machinery in `types.ts` and beside route definitions. `BASE`, `FILTER_ENV`, and `NoInfer` are guarded by `test/types/inference.test-d.ts`.
 
 ### TypeScript configuration
 
@@ -274,7 +284,7 @@ get('/me', (req, ctx) => Response.json(userKey.get(ctx)))
 
 ## Route groups (Phase 2)
 
-*Status: implemented in `src/router.ts`. Runtime tests are in `test/portable/group.test.ts`, and type tests in the "route groups" block of `test/types/inference.test-d.ts`.*
+*Status: values are defined in `src/routing/route.ts` and flattened in `src/routing/router.ts`. Runtime tests are in `test/portable/routing/group.test.ts`, and type tests in the "route groups" block of `test/types/inference.test-d.ts`.*
 
 A group joins a prefix onto its routes when `router()` is called and flattens them into the same trie as every other route. At run time a grouped route is indistinguishable from writing its full pattern directly. There is no run-time mounting and no hidden path state in `Context`.
 
@@ -325,7 +335,7 @@ const app = router(
 
 ### Group filters
 
-- **Composition:** `options.filters` compose like `compose(...filters)`, so the first filter is outermost. When `router()` is called, the composed filter wraps every route handler in the group, including routes of nested groups. An outer group's filters wrap an inner group's.
+- **Composition:** `options.filters` compose like `compose(...filters)`, so the first filter is outermost. During construction, `router()` accumulates filters in an array from outer to inner groups and applies `compose(...filters)` at each route. Filter arrays are never constructed on the request path. An outer group's filters wrap an inner group's.
 - **Request order:** filters around the router → router → outer group filters → inner group filters → route-level filters → handler.
 - **Group filters see route parameters**, because they run after routing, on the derived context.
 - **Filters are applied once per route, not once per group.** The `(next) => …` closure runs once for each route in the group. Keep state that must be shared across the group (rate-limit counters, caches) outside that closure.
@@ -544,7 +554,7 @@ When implementing, add type tests for each factory's option types and env infere
 
 ### Pattern syntax
 
-Patterns are a strict subset of `URLPattern` pathname syntax (`URLPattern` is part of ECMA-429). Every accepted pattern must match exactly the same paths as `new URLPattern({ pathname })`. `test/portable/urlpattern.test.ts` verifies this guarantee on every runtime.
+Patterns are a strict subset of `URLPattern` pathname syntax (`URLPattern` is part of ECMA-429). Every accepted pattern must match exactly the same paths as `new URLPattern({ pathname })`. `test/portable/routing/urlpattern.test.ts` verifies this guarantee on every runtime.
 
 | Token | Matches |
 | --- | --- |
@@ -592,7 +602,7 @@ The two intentional differences from `URLPattern`:
 ### Implementation
 
 - **`src/path.ts`:** `pathStart(url)` and `pathEnd(url, start)` return the path bounds as indices, allocation-free.
-- **`src/trie.ts`:** `Trie<T>` has three methods. A router owns one trie and only ever calls it synchronously.
+- **`src/routing/trie.ts`:** `Trie<T>` has three methods. A router owns one trie and only ever calls it synchronously.
   - **`insert(method, pattern, value)`:** registers a route and performs every definition check.
   - **`match(method, url, start, end)`:** returns the selected value, `MALFORMED` (respond 400), or `undefined`. On success, the parameters are in `trie.params`. Read them before the next `match`. This keeps a successful match within the allocation budget.
   - **`allow(url, start, end)`:** the sorted `Allow` list for a 405. It is empty when no route matches the path, which means 404. It runs only on the miss path, so it may allocate.
@@ -752,7 +762,7 @@ Node.js is not fully ECMA-429 conformant (its global object is not an `EventTarg
    | `deno` | `test:deno` | `deno run -A node_modules/vitest/vitest.mjs run` |
 
    A failure on any runtime blocks release.
-4. **Differential routing tests** (`test/portable/urlpattern.test.ts`) verify the subset guarantee.
+4. **Differential routing tests** (`test/portable/routing/urlpattern.test.ts`) verify the subset guarantee.
    - **Method:** corpus and generated patterns get a single-route trie, compared against `new URLPattern({ pathname })` on corpus or generated paths. The comparison checks matching and decoded parameter values. Reference capture names are aliased to avoid workerd's `__proto__` capture bug, as described under Property-based tests.
    - **Coverage:** all four runtimes ship `URLPattern`, so this runs four independent URLPattern implementations. The suite skips itself only on a runtime without `URLPattern`.
    - **Extending:** when changing pattern syntax or canonicalization, add patterns and paths to the corpus. A divergence means oleo is wrong, not the test.

@@ -1,5 +1,5 @@
-import { EMPTY_PARAMS } from './context-defaults.ts'
-import type { Params } from './types.ts'
+import { EMPTY_PARAMS } from '../context-defaults.ts'
+import type { Params } from '../types.ts'
 
 const CHAR_SLASH = 47
 const EMPTY_SEGMENT = -1

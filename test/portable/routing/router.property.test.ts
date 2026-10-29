@@ -1,8 +1,8 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { compose, get, group, route, router, toFetch } from '../../src/index.ts'
-import type { HttpFilter, HttpHandler } from '../../src/index.ts'
-import { PROPERTY_OPTIONS, paramNameArbitrary, paramValueArbitrary, staticSegmentArbitrary } from './arbitraries.ts'
+import { compose, get, group, route, router, toFetch } from '../../../src/index.ts'
+import type { HttpFilter, HttpHandler } from '../../../src/index.ts'
+import { PROPERTY_OPTIONS, paramNameArbitrary, paramValueArbitrary, staticSegmentArbitrary } from '../arbitraries.ts'
 
 describe('routing properties', () => {
   it('makes nested group filters equivalent to composing them on the full route', async () => {

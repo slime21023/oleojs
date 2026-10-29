@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { pathEnd, pathStart } from '../../src/path.ts'
-import { EMPTY_PARAMS } from '../../src/context-defaults.ts'
-import { MALFORMED, Trie } from '../../src/trie.ts'
+import { pathEnd, pathStart } from '../../../src/path.ts'
+import { EMPTY_PARAMS } from '../../../src/context-defaults.ts'
+import { MALFORMED, Trie } from '../../../src/routing/trie.ts'
 
 type Routes = Array<[method: string, pattern: string]>
 

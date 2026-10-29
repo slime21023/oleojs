@@ -1,9 +1,4 @@
-import { compose } from './compose.ts'
-import { EMPTY_PARAMS } from './context-defaults.ts'
-import { checkMethod } from './http-method.ts'
-import { pathEnd, pathStart } from './path.ts'
-import { MALFORMED, Trie } from './trie.ts'
-import type { HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from './types.ts'
+import type { HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from '../types.ts'
 
 // Type-level only: never set at run time.
 declare const BASE: unique symbol
@@ -33,9 +28,9 @@ export interface GroupOptions<E = unknown> {
   readonly filters?: readonly HttpFilter<E>[]
 }
 
-type Item<E, TBase extends Params> = Route<E, TBase> | RouteGroup<E, TBase>
+export type RouteItem<E, TBase extends Params> = Route<E, TBase> | RouteGroup<E, TBase>
 
-function kindOf(value: unknown): 'route' | 'group' | undefined {
+export function getRouteKind(value: unknown): 'route' | 'group' | undefined {
   return typeof value === 'object' && value !== null ? (value as { [KIND]?: 'route' | 'group' })[KIND] : undefined
 }
 
@@ -69,68 +64,21 @@ export const options = methodHelper('OPTIONS')
 // Builds a value only; prefixes are joined and checked when `router()` is called.
 export function group<E = unknown, TPrefix extends string = string, TBase extends Params = {}>(
   prefix: TPrefix,
-  ...items: Item<E, JoinParams<NoInfer<TBase>, ParamsOf<TPrefix>>>[]
+  ...items: RouteItem<E, JoinParams<NoInfer<TBase>, ParamsOf<TPrefix>>>[]
 ): RouteGroup<E, TBase>
 export function group<E = unknown, TPrefix extends string = string, TBase extends Params = {}>(
   prefix: TPrefix,
   options: GroupOptions<E>,
-  ...items: Item<E, JoinParams<NoInfer<TBase>, ParamsOf<TPrefix>>>[]
+  ...items: RouteItem<E, JoinParams<NoInfer<TBase>, ParamsOf<TPrefix>>>[]
 ): RouteGroup<E, TBase>
 export function group(prefix: string, ...rest: unknown[]): RouteGroup {
-  const hasOptions = rest.length > 0 && kindOf(rest[0]) === undefined
+  const hasOptions = rest.length > 0 && getRouteKind(rest[0]) === undefined
   const options = (hasOptions ? rest[0] : {}) as GroupOptions
-  const items = (hasOptions ? rest.slice(1) : rest) as Item<unknown, any>[]
+  const items = (hasOptions ? rest.slice(1) : rest) as RouteItem<unknown, any>[]
   return Object.freeze({
     [KIND]: 'group' as const,
     prefix,
     filters: Object.freeze([...(options.filters ?? [])]),
     items: Object.freeze(items),
   })
-}
-
-function withoutBody(res: Response): Response | Promise<Response> {
-  if (res.body === null) return res
-  return res.body.cancel().then(() =>
-    new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers }),
-  )
-}
-
-export function router<E = unknown>(...items: Item<E, {}>[]): HttpHandler<E> {
-  const trie = new Trie<HttpHandler<E, any>>()
-
-  // Collect filters outermost first, then compose once per route during construction.
-  const add = (item: unknown, prefix: string, inheritedFilters: readonly HttpFilter<E>[]): void => {
-    const kind = kindOf(item)
-    if (kind === 'route') {
-      const { method, pattern, handler } = item as Route<E, any>
-      checkMethod(method, prefix + pattern)
-      trie.insert(method, prefix + pattern, compose(...inheritedFilters)(handler))
-    } else if (kind === 'group') {
-      const { prefix: groupPrefix, filters, items: children } = item as RouteGroup<E, any>
-      const combinedFilters = [...inheritedFilters, ...filters]
-      for (const child of children) add(child, prefix + groupPrefix, combinedFilters)
-    } else {
-      throw new TypeError(`router() expects routes and groups${prefix ? ` (in group "${prefix}")` : ''}, got ${String(item)}`)
-    }
-  }
-  for (const item of items) add(item, '', [])
-
-  return (req, ctx) => {
-    const { url, method } = req
-    const start = pathStart(url)
-    const end = pathEnd(url, start)
-    const handler = trie.match(method, url, start, end)
-
-    if (handler === undefined) {
-      const allow = trie.allow(url, start, end)
-      if (allow.length === 0) return new Response(null, { status: 404 })
-      return new Response(null, { status: 405, headers: { Allow: allow.join(', ') } })
-    }
-    if (handler === MALFORMED) return new Response(null, { status: 400 })
-
-    const params = trie.params
-    const res = handler(req, params === EMPTY_PARAMS ? ctx : { ...ctx, params })
-    if (method !== 'HEAD') return res
-    return 'then' in res ? res.then(withoutBody) : withoutBody(res)
-  }
 }
