@@ -141,6 +141,7 @@ describe('route definition errors', () => {
     ['/files/a*', '":" and "*" must form a whole segment'],
     ['/:id?', 'not a valid parameter'],
     ['/:', 'not a valid parameter'],
+    ['/:id/x/:id', 'duplicate parameter ":id"'],
     ['/a(b)', 'unsupported URLPattern syntax'],
     ['/a{b}', 'unsupported URLPattern syntax'],
     ['/a+', 'unsupported URLPattern syntax'],

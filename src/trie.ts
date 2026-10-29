@@ -78,6 +78,7 @@ export class Trie<T> {
     const segments = pattern.slice(1).split('/')
     let node = this.#root
     let hasParams = false
+    const names = new Set<string>()
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i]!
       const last = i === segments.length - 1
@@ -89,6 +90,8 @@ export class Trie<T> {
       } else if (segment.startsWith(':')) {
         const name = segment.slice(1)
         if (!PARAM_NAME.test(name)) throw invalid(pattern, `"${segment}" is not a valid parameter`)
+        if (names.has(name)) throw invalid(pattern, `duplicate parameter ":${name}"`)
+        names.add(name)
         if (node.param !== undefined && node.param.name !== name) {
           throw invalid(pattern, `":${name}" conflicts with ":${node.param.name}" at the same position`)
         }

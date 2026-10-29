@@ -92,6 +92,15 @@ describe('filters', () => {
     const routes: HttpHandler<OtherEnv> = ok
     // @ts-expect-error -- needsDb requires Env
     needsDb(routes)
+    // @ts-expect-error -- also through compose, mixed with an env-agnostic filter
+    compose(logger, needsDb)(routes)
+  })
+
+  it('does not treat an env-requiring filter as a filter of another env', () => {
+    // @ts-expect-error -- an HttpFilter<Env> is not an HttpFilter<OtherEnv>
+    const leaked: HttpFilter<OtherEnv> = needsDb
+    const widened: HttpFilter<Env> = logger
+    void [leaked, widened]
   })
 
   it('passes context-key values downstream', () => {

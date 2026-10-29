@@ -150,7 +150,8 @@ type HttpHandler<E = unknown, P extends Params = Params> =
   (req: Request, ctx: Context<E, P>) => Response | Promise<Response>
 
 type HttpFilter<E = unknown> =
-  <TEnv extends E, P extends Params>(next: HttpHandler<TEnv, P>) => HttpHandler<TEnv, P>
+  (<TEnv extends E, P extends Params>(next: HttpHandler<TEnv, P>) => HttpHandler<TEnv, P>)
+  & { readonly [FILTER_ENV]?: (env: E) => void } // type-level only, never set
 
 interface FetchHandler<E = unknown> {
   fetch(request: Request, env?: E, executionCtx?: ExecutionContext): Promise<Response>
@@ -163,6 +164,7 @@ type ParamsOf<TPattern extends string> = /* '/users/:id/*' → { readonly id: st
 
 - **Generic over `TEnv`:** an env-agnostic filter (`HttpFilter`) wraps handlers of any env, and `HttpFilter<Env>` wraps any handler whose env satisfies `Env`. Without this, a filter like `logger()` could not wrap an `HttpHandler<Env>`.
 - **Generic over `P`:** a filter can wrap a single route handler without losing parameter inference.
+- **The phantom `FILTER_ENV` member** carries `E` contravariantly. TypeScript ignores type-parameter constraints when relating generic signatures, so without it an `HttpFilter<Env>` would be assignable to `HttpFilter<OtherEnv>`, and `compose(logger, needsDb)` would accept a handler of the wrong env. Arrow functions remain assignable because the member is optional. Never remove it; the inference contract covers both holes.
 
 `ParamsOf` is exported for typing handlers declared apart from their route. A non-literal `string` pattern yields `Params`.
 
@@ -302,6 +304,7 @@ The two intentional differences from `URLPattern`:
 - Two different `:name`s at the same position (`/u/:id` vs `/u/:userId/posts`).
 - The same method and pattern registered twice, including equivalent encodings (`/café` and `/caf%C3%A9`).
 - A `:name` that is not a valid `URLPattern` name: a JavaScript identifier (`/:`, `/:id?`).
+- The same `:name` twice in one pattern (`/:id/x/:id`). `URLPattern` rejects duplicate group names too.
 - A `:` or `*` that does not form a whole segment (`/a:b`, `/files/a*`). In `URLPattern` these would be parameters or wildcards inside a segment.
 - `*` in any segment but the last.
 - An empty segment anywhere but the end (`/a//b`).

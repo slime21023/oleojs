@@ -27,9 +27,16 @@ export interface Context<E = unknown, P extends Params = Params> {
 export type HttpHandler<E = unknown, P extends Params = Params> =
   (req: Request, ctx: Context<E, P>) => Response | Promise<Response>
 
+// Type-level only: never set at run time.
+declare const FILTER_ENV: unique symbol
+
 // A filter requiring env `E` applies to any handler whose env satisfies `E`.
+// TypeScript ignores type-parameter constraints when relating generic signatures, so the
+// phantom `FILTER_ENV` member carries `E` contravariantly: without it, an `HttpFilter<Env>`
+// would be assignable to `HttpFilter<OtherEnv>`.
 export type HttpFilter<E = unknown> =
-  <TEnv extends E, P extends Params>(next: HttpHandler<TEnv, P>) => HttpHandler<TEnv, P>
+  (<TEnv extends E, P extends Params>(next: HttpHandler<TEnv, P>) => HttpHandler<TEnv, P>)
+  & { readonly [FILTER_ENV]?: (env: E) => void }
 
 export interface FetchHandler<E = unknown> {
   fetch(request: Request, env?: E, executionCtx?: ExecutionContext): Promise<Response>

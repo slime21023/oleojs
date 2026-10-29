@@ -111,6 +111,12 @@ describe.skipIf(typeof URLPattern === 'undefined')('URLPattern subset', () => {
     expect(() => new URLPattern({ pathname: pattern })).not.toThrow()
   })
 
+  // URLPattern rejects duplicate group names, so oleo must reject them too.
+  it('rejects duplicate parameter names, as URLPattern does', () => {
+    expect(() => new URLPattern({ pathname: '/:id/x/:id' })).toThrow(TypeError)
+    expect(() => new Trie().insert('GET', '/:id/x/:id', true)).toThrow(TypeError)
+  })
+
   it.each(cases)('%j matches %j as URLPattern does', (pattern, path) => {
     const url = new Request(`http://example.test${path}`).url
     expect(viaOleo(pattern, url)).toEqual(viaUrlPattern(pattern, url))
