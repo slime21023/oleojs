@@ -1,0 +1,43 @@
+{
+  "name": "oleo.js",
+  "version": "0.0.0",
+  "description": "Zero-dependency HTTP router and middleware for WinterTC runtimes",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "lint": "oxlint",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:types": "vitest run --project types",
+    "test:node": "vitest run --project portable --project node",
+    "test:bun": "bun --bun vitest run --project portable",
+    "test:workerd": "vitest run --config vitest.workers.config.ts",
+    "test:deno": "deno run -A node_modules/vitest/vitest.mjs run --project portable",
+    "test:all": "bun run test:node && bun run test:bun && bun run test:workerd && bun run test:deno",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.10",
+    "@types/node": "26.6.6",
+    "oxlint": "1.90.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

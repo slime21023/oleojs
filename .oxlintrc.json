@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": ["dist/**"],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["node:*", "bun", "bun:*", "cloudflare:*"],
+            "message": "Portable code may use only ECMA-262 and ECMA-429 APIs (AGENTS.md, Standards conformance)."
+          }
+        ]
+      }
+    ],
+    "no-restricted-globals": [
+      "error",
+      "process",
+      "Buffer",
+      "global",
+      "require",
+      "__dirname",
+      "__filename",
+      "setImmediate",
+      "Deno",
+      "Bun",
+      "window",
+      "document"
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["src/node/**", "*.config.ts"],
+      "rules": {
+        "no-restricted-imports": "off",
+        "no-restricted-globals": "off"
+      }
+    }
+  ]
+}
