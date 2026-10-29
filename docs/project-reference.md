@@ -10,9 +10,9 @@ Design influences: [http4k](https://www.http4k.org/) (server as a function, comp
 
 | Export | Tier | Contents | Status |
 | --- | --- | --- | --- |
-| `oleo.js` | Portable | Router, route helpers, groups, core types, `compose`, context keys, `toFetch` | Phases 1–2 implemented |
+| `oleo.js` | Portable | Router, route helpers, groups, core types, `compose`, `withFilters`, context keys, `toFetch` | Phases 1–2 implemented |
 | `oleo.js/node` | Adapter | `node:http` / `node:http2` bridge | Implemented |
-| `oleo.js/filters` | Portable | CORS, Bearer authentication, RFC 9457 errors, and request logging | Phase 3 implemented |
+| `oleo.js/filters` | Portable | CORS, Bearer authentication, RFC 9457 errors, request logging, and message transformations | Phase 3 implemented, with transformation helpers |
 | `oleo.js/contract` | Portable | Declarative contracts, OpenAPI 3.1 generation | Phase 4 undecided; not implemented or exported |
 
 Phases 1–3 are implemented, including all four [standard filters](#standard-filters-phase-3). There are no open API decisions for these phases. **Ask before implementing Phase 4 APIs.**
@@ -76,7 +76,7 @@ src/
   types.ts                  # core types (see Core API)
   path.ts                   # path bounds within request.url
   fetch.ts                  # toFetch: creates the per-request context
-  compose.ts                # compose
+  compose.ts                # compose, withFilters, and combined environment inference
   context-key.ts            # contextKey
   context-defaults.ts       # shared EMPTY_PARAMS and executionCtx stub
   http-method.ts            # method validation and Fetch-forbidden methods
@@ -91,6 +91,9 @@ src/
     bearer-auth.ts          # Bearer credentials, verification, and typed principals
     problem-details.ts      # problem documents, error mapping, and isolated reporting
     request-logger.ts       # request outcomes, timing, and isolated logging callbacks
+    map-request.ts          # synchronous/asynchronous request transformations
+    map-response.ts         # synchronous/asynchronous response transformations
+    response-headers.ts     # header snapshots and response reconstruction
   node/
     index.ts                # `oleo.js/node` entry
     listener.ts             # toNodeListener: ingress, egress, errors, disconnects
@@ -113,11 +116,15 @@ test/
       request-logger.test.ts # outcome fields, timing, privacy, and callback isolation
       standard-filters.test.ts # composition of all four filters around routed authentication
       standard-filters.property.test.ts # generated CORS, Bearer, and logging properties
+      transforms.test.ts    # callback ordering, context visibility, errors, and streams
+      response-headers.test.ts # header preservation, cookies, streaming, and generated cases
   node/
     listener.test.ts        # real HTTP/1.1 and HTTP/2 servers
   types/
     inference.test-d.ts     # public type inference contract
     filters.test-d.ts       # filter options and preservation of environment/parameter inference
+    composition.test-d.ts   # combined environments and the one-call withFilters entry
+    transform-filters.test-d.ts # transform callback inference and public option types
 vitest.config.ts            # projects: portable, node, types
 vitest.workers.config.ts    # portable tests inside workerd
 .oxlintrc.json
@@ -167,6 +174,8 @@ Coding rules that follow from these options:
 
 [`test/types/filters.test-d.ts`](../test/types/filters.test-d.ts) covers each factory's options, contextual environments, route-parameter preservation, and principal types. The env-agnostic factories use `<E = unknown>` to carry the surrounding environment type into group options; returning a fixed `HttpFilter<unknown>` would widen the group's environment to `unknown`. Bearer verification accepts an annotated context or infers its environment from the surrounding router/group.
 
+[`test/types/composition.test-d.ts`](../test/types/composition.test-d.ts) covers automatic intersection of independent environment requirements, neutral filters, arrays, nested stacks, explicit generics, route parameters, and invalid supplied environments. [`test/types/transform-filters.test-d.ts`](../test/types/transform-filters.test-d.ts) covers transformation callbacks and their inference through `withFilters` and route groups.
+
 Keep these mechanisms intact:
 
 | Mechanism | Why it is required |
@@ -177,6 +186,8 @@ Keep these mechanisms intact:
 | Plain mapped `JoinParams` | A conditional type collapses an unresolved `TBase` to `Params` during inference |
 | `NoInfer<TBase>` in route helpers | Prevents a separately declared handler from inferring `TBase` backwards and losing inference; retain the defensive `NoInfer` in `group()` too |
 | `NoInfer<T>` in the Bearer verifier return type | Lets the context key determine the principal type, preventing an unknown verifier result from widening it and bypassing validation |
+| Non-distributive `FilterEnvironment` inference | Infers the intersection from all contravariant filter requirements together; extracting a union first would lose requirements alongside `unknown` |
+| Contextual composition overloads | Preserve environment inference for inline filter factories; the heterogeneous overload handles filters with independent requirements |
 
 Phantom members are type-level only and are never set at runtime. The optional filter phantom keeps ordinary arrow functions assignable as filters. See [route groups](#route-groups-phase-2) for usage patterns.
 
@@ -187,6 +198,7 @@ Phantom members are type-level only and are never set at runtime. The optional f
 - Properties cover parameter names and percent-decoding, route priority and registration order, `Allow` unions, group flattening and filter equivalence, malformed paths, path extraction, context-key isolation, filter order, and URLPattern equivalence. Generate matching and nonmatching paths so a property cannot pass by only checking 404s.
 - Problem-details properties cover status/header preservation, unchanged existing bodies, generic errors, and JSON extension round trips. Compare extensions after JSON normalization, which converts values such as `-0` to `0`.
 - Standard-filter properties cover CORS origin decisions and `Vary` merging, valid and malformed Bearer credentials, principal preservation, and logging of generated paths, statuses, and thrown values. Integration cases exercise preflights, authentication, problem responses, and final-status logging together.
+- Composition properties exercise both `compose` and `withFilters`. Response-header properties verify generated body bytes and unaffected headers while configured names are replaced.
 - Run routing properties with `bun run test --project portable router.property.test.ts`. All properties also run through the regular test commands and the four-runtime matrix.
 - To reproduce a failure, pass its printed `seed` and `path` to the failing `fc.assert` options. Keep the dependency version fixed, save the reduced input as a regression or an explicit `examples` entry, and remove the temporary replay `path` afterwards. To explore more inputs, temporarily change the shared seed and increase `numRuns`.
 - Reference results must be independent of the implementation. Use `Object.fromEntries` for expected parameter maps so `__proto__` becomes an own property. The URLPattern reference workaround is described under [Enforcement](#enforcement).
@@ -264,7 +276,7 @@ The [type inference contract](#type-inference-contract) explains the required ge
 An application is plain function composition. There is no application class and no mutable registration step.
 
 ```ts
-import { router, get, post, del, compose, toFetch } from 'oleo.js'
+import { router, get, post, del, toFetch, withFilters } from 'oleo.js'
 
 const routes = router(
   get('/users/:id', (req, ctx) => Response.json({ id: ctx.params.id })),
@@ -273,7 +285,7 @@ const routes = router(
 )
 
 // Application-provided filters; standard alternatives are exported from oleo.js/filters.
-const app = compose(logger(), requireAuth())(routes)
+const app = withFilters(routes, logger(), requireAuth())
 
 export default toFetch(app)
 ```
@@ -285,11 +297,20 @@ export default toFetch(app)
 | `router(...items)` | `HttpHandler` | Takes routes and groups. Builds the trie once. Throws on [route definition errors](#route-definition-errors) |
 | `group(prefix, options?, ...items)` | `RouteGroup` | See [Route groups](#route-groups-phase-2) |
 | `compose(...filters)` | `HttpFilter` | `compose(a, b)(h)` is `a(b(h))`: the first filter is outermost. `compose()` is the identity |
+| `withFilters(handler, ...filters)` | `HttpHandler` | Applies the same outermost-first order in one call, retaining route parameters and combining environment requirements |
 | `toFetch(handler)` | `FetchHandler` | The only entry point. Creates the `Context` |
 
 - **Routes are values.** A `Route` is immutable, and `router()` reads it once. A router is itself an `HttpHandler`, so routers and filters nest freely.
 - **Type inference.** Route patterns are parsed with template literal types: `'/users/:id/*'` yields `ctx.params: { id: string; '*': string }`. `router<E>(...)` fixes `E` for its routes, and route helpers infer `E` and `P` contextually.
 - **Clients are handlers too.** Any `(req) => Promise<Response>` is assignable to `HttpHandler`. Do not pass `globalThis.fetch` itself as a handler: its second parameter is `RequestInit`, not `Context`. Wrap it as `(req) => fetch(req)`.
+
+### Composing filters
+
+- Use `withFilters(handler, ...filters)` to apply filters directly, and `compose(...filters)` to create a reusable stack. Both keep the first filter outermost and apply each wrapping closure once, when the stack is attached to a handler.
+- Independent environment requirements are intersected automatically. For `db: HttpFilter<DbEnv>` and `cache: HttpFilter<CacheEnv>`, `compose(db, cache)` produces `HttpFilter<DbEnv & CacheEnv>`. Env-agnostic filters do not erase those requirements. Existing explicit calls such as `compose<Env>(...)` remain supported.
+- `withFilters` combines the handler's environment with the filters' requirements. A handler using only the database may be wrapped by a cache-dependent filter; the resulting handler requires both. Supplied Fetch environments are checked against that combined type. Contradictory requirements remain contradictory instead of being widened away.
+- A typed handler passed first to `withFilters` supplies contextual environment typing to inline filter factories. Inline route handlers keep their inferred parameter names. Separate transformation factories can instead use an annotated `Context<Env>` callback.
+- Empty compositions and `withFilters(handler)` return the handler unchanged. The result is an ordinary callable handler or filter, with no chain methods or additional lifecycle state.
 
 ### Entry point
 
@@ -619,7 +640,7 @@ These are not part of the core. Compose them as filters or separate packages ins
 - **Recommended order** around a router:
 
   ```ts
-  compose(requestLogger(), cors({ origin }), problemDetails())(router(/* … bearerAuth per group or route … */))
+  withFilters(router(/* … bearerAuth per group or route … */), requestLogger(), cors({ origin }), problemDetails())
   ```
 
   - **`requestLogger` outermost** sees the final status.
@@ -777,3 +798,51 @@ function requestLogger<E = unknown>(options?: RequestLoggerOptions): HttpFilter<
 ### Contract
 
 Runtime and property-based tests live in `test/portable/filters/` and run on Node, Bun, workerd, and Deno. Composition tests verify preflight bypass, authenticated routes, empty error conversion, CORS on errors, bodyless HEAD responses, and final-status logging. `test/types/filters.test-d.ts` covers factory options, environment/parameter preservation, and Bearer principal compatibility, including rejection of unknown or incompatible verifier results.
+
+## Transformation filters
+
+These helpers are exported from `oleo.js/filters`. They follow the same portable API and native-message preservation rules as standard filters.
+
+### `mapRequest(transform)` and `mapResponse(transform)`
+
+```ts
+type RequestTransform<E = unknown> = (req: Request, ctx: Context<E>) => Request | Promise<Request>
+type ResponseTransform<E = unknown> =
+  (response: Response, req: Request, ctx: Context<E>) => Response | Promise<Response>
+
+function mapRequest<E = unknown>(transform: RequestTransform<E>): HttpFilter<E>
+function mapResponse<E = unknown>(transform: ResponseTransform<E>): HttpFilter<E>
+```
+
+- A transform must be a function; invalid options throw `TypeError` when the factory is called.
+- `mapRequest` awaits the callback and passes its returned Request to the next handler with the same context. A callback failure skips the next handler.
+- `mapResponse` awaits the next handler before invoking the callback. A downstream failure skips the callback. Its returned Response becomes the filter's result.
+- Both synchronous throws and promise rejections propagate to outer filters. These helpers do not render errors or isolate callbacks as logging filters do.
+- Callbacks receive the request and context visible at their filter's position. A response transform outside the router does not see route parameters or context keys added downstream. A group transform runs after routing and sees the matched parameters.
+- Context is preserved, including symbol-keyed values. Callback parameter types use `Context<E>`; route-specific parameter inference on the wrapped handler remains intact.
+- Helpers do not inspect or buffer bodies. Any reading or replacement belongs to the callback, which must respect native stream ownership and return new messages when making changes.
+
+### `responseHeaders(headers)`
+
+```ts
+function responseHeaders<E = unknown>(headers: HeadersInit): HttpFilter<E>
+```
+
+- Accepts a native Headers instance, a record, or header pairs. Configuration is validated and copied through `new Headers(headers)` when the factory is called; missing or invalid inputs throw `TypeError`.
+- Configured names replace existing values case-insensitively. Other headers are preserved. Repeated Set-Cookie values remain separate, including when replacing an existing set of cookies.
+- Each response receives a separate Headers copy and a new Response retaining status, status text, and body. The original headers and configured input are not modified; later caller mutations do not affect the filter.
+- Bodies remain streaming and are not read or buffered. Null bodies remain null, including HEAD, 204, and 304 responses.
+- Status-zero responses pass through unchanged because native Response constructors cannot recreate network-error or opaque responses.
+- This helper changes headers only; it does not recompute representation metadata. Callers choose header values appropriate to their body.
+
+Example, with the first filter outermost:
+
+```ts
+const app = withFilters(routes,
+  mapRequest(addRequestHeaders),
+  responseHeaders({ 'Cache-Control': 'no-store' }),
+  mapResponse(transformResponse),
+)
+```
+
+Tests are in `test/portable/filters/transforms.test.ts`, `test/portable/filters/response-headers.test.ts`, and `test/types/transform-filters.test-d.ts`. They cover asynchronous callbacks, failure propagation, context visibility, immutable header handling, multiple cookies, streaming bodies, and generated header/body preservation.

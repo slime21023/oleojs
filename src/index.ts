@@ -1,4 +1,4 @@
-export { compose } from './compose.ts'
+export { compose, withFilters } from './compose.ts'
 export { contextKey } from './context-key.ts'
 export type { ContextKey } from './context-key.ts'
 export { toFetch } from './fetch.ts'

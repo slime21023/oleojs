@@ -54,7 +54,7 @@ The package currently exposes three entry points: `oleo.js`, `oleo.js/filters`, 
 | --- | --- | --- |
 | Routing | `router`, `get`, `post`, `put`, `patch`, `del`, `head`, `options`, `route` | Define method-and-path routes with inferred parameters. Use `route` for custom HTTP methods. |
 | Route groups | `group`, `RouteGroup`, `GroupOptions` | Share path prefixes and middleware across nested routes. |
-| Middleware composition | `compose`, `HttpFilter`, `HttpHandler` | Wrap handlers with reusable behavior in an explicit order. |
+| Middleware composition | `withFilters`, `compose`, `HttpFilter`, `HttpHandler` | Apply filters in one call or build a reusable stack, combining their environment requirements. |
 | Typed context | `contextKey`, `ContextKey`, `Context` | Pass typed values, environment data, and route parameters through request handling. |
 | Fetch entry point | `toFetch`, `FetchHandler`, `ExecutionContext` | Create a per-request context and expose a callable `fetch` entry point. |
 | Route types | `Route`, `Params`, `ParamsOf` | Describe route values and type handlers declared separately from their routes. |
@@ -62,6 +62,7 @@ The package currently exposes three entry points: `oleo.js`, `oleo.js/filters`, 
 | Bearer authentication | `bearerAuth`, `BearerAuthOptions` from `oleo.js/filters` | Verify tokens through application code and optionally store a typed principal. |
 | Problem details | `problemDetails`, `Problem`, `ProblemDetailsOptions` from `oleo.js/filters` | Convert thrown errors and empty error responses into problem documents. |
 | Request logging | `requestLogger`, `LogEntry`, `RequestLoggerOptions` from `oleo.js/filters` | Record the request outcome and duration, with optional application fields. |
+| Request/response transformations | `mapRequest`, `mapResponse`, `responseHeaders` from `oleo.js/filters` | Transform messages with synchronous or asynchronous callbacks, or set response headers. |
 | Node.js adapter | `toNodeListener` from `oleo.js/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. |
 
 Routing, composition, context, and Fetch APIs are exported from `oleo.js`. Filters and the Node.js adapter have their own entry points.
@@ -80,10 +81,10 @@ Groups combine prefixes with their nested routes. A route with an empty pattern,
 
 ### Middleware and context keys
 
-A filter wraps a handler. `compose(a, b)(handler)` means `a(b(handler))`: the first filter is outermost.
+A filter wraps a handler. `withFilters(handler, a, b)` applies filters in one call and means `a(b(handler))`: the first filter is outermost. Use `compose(a, b)` when you want to reuse that stack with several handlers.
 
 ```ts
-import { compose, contextKey, get, router, toFetch } from 'oleo.js'
+import { contextKey, get, router, toFetch, withFilters } from 'oleo.js'
 import type { HttpFilter } from 'oleo.js'
 
 const requestIdKey = contextKey<string>('request-id')
@@ -97,20 +98,21 @@ const routes = router(
   })),
 )
 
-export default toFetch(compose(identifyRequest)(routes))
+export default toFetch(withFilters(routes, identifyRequest))
 ```
 
 `with` creates a derived context. `get` requires the value to be present and throws if it is missing; `find` returns `undefined` when absent. Values survive the context derivation performed by routing.
 
 Filters can return early, handle errors, or transform a response. To change response headers, copy the headers and construct a new `Response`. Keep incoming requests and responses unchanged.
 
+Environment requirements combine automatically. If `needsDb` is an `HttpFilter<DbEnv>` and `needsCache` is an `HttpFilter<CacheEnv>`, `compose(needsDb, needsCache)` returns an `HttpFilter<DbEnv & CacheEnv>`. `withFilters(handler, needsDb, needsCache)` also retains any environment requirements and route parameters of the handler. A handler can use only part of that environment; callers supply the combined requirements.
+
 ### Standard filters
 
 All four standard filters are available from `oleo.js/filters`. They compose with custom filters and preserve handler environment and route-parameter types.
 
 ```ts
-import { compose, contextKey, get, group, router, toFetch } from 'oleo.js'
-import type { Context } from 'oleo.js'
+import { contextKey, get, group, router, toFetch, withFilters } from 'oleo.js'
 import { bearerAuth, cors, problemDetails, requestLogger } from 'oleo.js/filters'
 
 interface User { id: string }
@@ -120,18 +122,18 @@ const userKey = contextKey<User>('user')
 const routes = router<Env>(
   group('/api', {
     filters: [bearerAuth({
-      verify: (token, _request, ctx: Context<Env>) => ctx.env.verifyToken(token),
+      verify: (token, _request, ctx) => ctx.env.verifyToken(token),
       key: userKey,
       realm: 'api',
     })],
   }, get('/me', (_request, ctx) => Response.json(userKey.get(ctx)))),
 )
 
-const app = toFetch(compose(
+const app = toFetch(withFilters(routes,
   requestLogger(),
   cors({ origin: 'https://app.example.com' }),
   problemDetails(),
-)(routes))
+))
 
 export default app
 ```
@@ -143,6 +145,36 @@ Supply the application's `verifyToken` through `env`, as described under runtime
 - **Request logging:** the default writes one JSON entry with the method, raw path, status, and duration in milliseconds. Query strings are excluded, and timing ends when the handler returns a response. Customize `log(entry)` and synchronous `fields(request, response)` callbacks; additional fields cannot override core fields. Thrown errors are logged and rethrown. Logging failures are reported without changing the request outcome.
 
 Each factory validates its options when called. Filters keep the package free of runtime dependencies.
+
+### Request and response transformations
+
+Use `mapRequest((request, ctx) => ...)` to pass a transformed request downstream, or `mapResponse((response, request, ctx) => ...)` to transform a returned response. Both accept synchronous or asynchronous callbacks and propagate errors. They preserve the context; a response callback sees the context at its filter's position, so a filter outside the router does not gain route parameters afterwards.
+
+For static response headers, `responseHeaders(headers)` handles copying and reconstruction:
+
+```ts
+import { get, router, toFetch, withFilters } from 'oleo.js'
+import { mapRequest, responseHeaders } from 'oleo.js/filters'
+
+const routes = router(get('/language', (request) =>
+  new Response(request.headers.get('Accept-Language')),
+))
+
+const app = withFilters(routes,
+  mapRequest((request) => {
+    const headers = new Headers(request.headers)
+    if (!headers.has('Accept-Language')) headers.set('Accept-Language', 'en')
+    return new Request(request, { headers })
+  }),
+  responseHeaders({ 'Cache-Control': 'no-store', 'X-Service': 'oleo' }),
+)
+
+export default toFetch(app)
+```
+
+`responseHeaders` accepts a native `Headers`, header record, or array of header pairs. It snapshots the configuration, replaces matching names, and preserves other headers, repeated `Set-Cookie` values, status, and the streaming body. Status-zero responses pass through unchanged. Transform callbacks own any body reading and should return new messages when making changes.
+
+Callbacks can use an environment inferred from the surrounding router/group or a typed handler passed to `withFilters`. For a separately declared transform, annotate `ctx: Context<Env>` or use the exported `RequestTransform<Env>` / `ResponseTransform<Env>` types.
 
 ### Problem details
 

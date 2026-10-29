@@ -1,6 +1,6 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { compose } from '../../src/compose.ts'
+import { compose, withFilters } from '../../src/compose.ts'
 import { EMPTY_PARAMS } from '../../src/context-defaults.ts'
 import type { Context, HttpFilter, HttpHandler } from '../../src/types.ts'
 import { PROPERTY_OPTIONS } from './arbitraries.ts'
@@ -18,10 +18,12 @@ function tracing(name: string, log: string[]): HttpFilter {
 }
 
 describe('compose', () => {
-  it('enters any filter sequence in order and exits in reverse', async () => {
+  it.each(['compose', 'withFilters'])('%s enters any filter sequence in order and exits in reverse', async (entry) => {
     await fc.assert(fc.asyncProperty(fc.array(fc.string(), { maxLength: 12 }), async (names) => {
       const log: string[] = []
-      const app = compose(...names.map((name) => tracing(name, log)))(() => new Response())
+      const filters = names.map((name) => tracing(name, log))
+      const next = () => new Response()
+      const app = entry === 'compose' ? compose(...filters)(next) : withFilters(next, ...filters)
       await app(request(), ctx)
       expect(log).toEqual([
         ...names.map((name) => `${name} in`),
@@ -58,5 +60,26 @@ describe('compose', () => {
     const deny: HttpFilter = () => () => new Response(null, { status: 403 })
     const res = await compose(deny)(() => new Response())(request(), ctx)
     expect(res.status).toBe(403)
+  })
+})
+
+describe('withFilters', () => {
+  it('returns the handler unchanged when no filters are supplied', () => {
+    const handler: HttpHandler = () => new Response()
+    expect(withFilters(handler)).toBe(handler)
+  })
+
+  it('wraps once and supports short-circuiting on each request', async () => {
+    let wraps = 0
+    let requests = 0
+    const deny: HttpFilter = () => {
+      wraps++
+      return () => { requests++; return new Response(null, { status: 403 }) }
+    }
+    const app = withFilters(() => { throw new Error('must not run') }, deny)
+    expect((await app(request(), ctx)).status).toBe(403)
+    expect((await app(request(), ctx)).status).toBe(403)
+    expect(wraps).toBe(1)
+    expect(requests).toBe(2)
   })
 })
