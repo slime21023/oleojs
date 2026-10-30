@@ -32,7 +32,7 @@
   "packageManager": "bun@1.4.0",
   "scripts": {
     "lint": "oxlint",
-    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && tsc -p tsconfig.docs.json",
     "test": "vitest run",
     "test:types": "vitest run --project types",
     "test:node": "vitest run --project portable --project node",
@@ -40,7 +40,10 @@
     "test:workerd": "vitest run --config vitest.workers.config.ts",
     "test:deno": "deno run -A node_modules/vitest/vitest.mjs run --project portable",
     "test:all": "bun run test:node && bun run test:bun && bun run test:workerd && bun run test:deno",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.10",
@@ -48,6 +51,7 @@
     "fast-check": "4.10.2",
     "oxlint": "1.90.0",
     "typescript": "7.0.2",
+    "vitepress": "1.6.4",
     "vitest": "5.0.5"
   }
 }

@@ -1,5 +1,5 @@
 // The value exports of each portable entry point. Changing this list is a public API decision
-// (docs/project-reference.md, Package manifest); type exports are reviewed alongside it.
+// (CONTRIBUTING.md, Package manifest); type exports are reviewed alongside it.
 import { describe, expect, it } from 'vitest'
 
 const surfaces = {

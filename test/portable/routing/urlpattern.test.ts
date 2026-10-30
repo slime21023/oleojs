@@ -1,4 +1,4 @@
-// Differential tests for the URLPattern subset guarantee (docs/project-reference.md, Pattern syntax):
+// Differential tests for the URLPattern subset guarantee (docs/reference/routing.md, Pattern syntax):
 // every accepted pattern matches exactly the paths `new URLPattern({ pathname })` matches,
 // with the same parameter values once URLPattern's are decoded and its `'0'` is named `'*'`.
 import fc from 'fast-check'

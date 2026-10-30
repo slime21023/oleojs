@@ -1,4 +1,4 @@
-// Verifies the runtime assumptions the core relies on (see docs/project-reference.md, Routing > Path extraction).
+// Verifies the runtime assumptions the core relies on (see docs/reference/routing.md, Path extraction).
 import { describe, expect, it } from 'vitest'
 
 describe('runtime baseline', () => {

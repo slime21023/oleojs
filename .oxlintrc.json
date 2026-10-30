@@ -3,7 +3,7 @@
   "categories": {
     "correctness": "error"
   },
-  "ignorePatterns": ["dist/**"],
+  "ignorePatterns": ["dist/**", "docs/.vitepress/cache/**", "docs/.vitepress/dist/**"],
   "rules": {
     "no-restricted-imports": [
       "error",
@@ -11,7 +11,7 @@
         "patterns": [
           {
             "group": ["node:*", "bun", "bun:*", "cloudflare:*"],
-            "message": "Portable code may use only ECMA-262 and ECMA-429 APIs (docs/project-reference.md, Standards conformance)."
+            "message": "Portable code may use only ECMA-262 and ECMA-429 APIs (CONTRIBUTING.md, Standards conformance)."
           }
         ]
       }
@@ -41,11 +41,11 @@
             "patterns": [
               {
                 "group": ["node:*", "bun", "bun:*", "cloudflare:*"],
-                "message": "Portable code may use only ECMA-262 and ECMA-429 APIs (docs/project-reference.md, Standards conformance)."
+                "message": "Portable code may use only ECMA-262 and ECMA-429 APIs (CONTRIBUTING.md, Standards conformance)."
               },
               {
                 "group": ["../routing/*", "../http-method.ts"],
-                "message": "Extensions use routing only through the public API (inspectRoutes, withRouteCheck) so third parties can build the same (docs/project-reference.md, Extension API)."
+                "message": "Extensions use routing only through the public API (inspectRoutes, withRouteCheck) so third parties can build the same (docs/extending/index.md)."
               }
             ]
           }

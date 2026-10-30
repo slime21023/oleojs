@@ -1,4 +1,4 @@
-// Type inference contract for the public API (docs/project-reference.md, Building an application).
+// Type inference contract for the public API (docs/reference/api.md; maintenance rules in CONTRIBUTING.md, Type inference contract).
 // Never weaken or delete a case to make it pass.
 import { describe, expectTypeOf, it } from 'vitest'
 import { compose } from '../../src/compose.ts'
