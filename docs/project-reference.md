@@ -13,11 +13,11 @@ Design influences: [http4k](https://www.http4k.org/) (server as a function, comp
 | `oleo.js` | Portable | Router, route helpers, groups, core types, `compose`, `withFilters`, context keys, `toFetch` | Phases 1–2 implemented |
 | `oleo.js/node` | Adapter | `node:http` / `node:http2` bridge | Implemented |
 | `oleo.js/filters` | Portable | CORS, Bearer authentication, RFC 9457 errors, request logging, and message transformations | Phase 3 implemented, with transformation helpers |
-| `oleo.js/contract` | Portable | Declarative contracts, OpenAPI 3.1 generation | Phase 4 undecided; not implemented or exported |
+| `oleo.js/contract` | Portable | Declarative contracts, Standard Schema input validation, OpenAPI 3.1.1 generation | Phase 4 implemented |
 
-Phases 1–3 are implemented, including all four [standard filters](#standard-filters-phase-3). There are no open API decisions for these phases. **Ask before implementing Phase 4 APIs.**
+Phases 1–4 are implemented, including all four [standard filters](#standard-filters-phase-3) and the optional [Contract module](#contracts).
 
-Read the [hard rules](#hard-rules) and [development workflow](#development-environment) before changing code. Use the [repository layout](#repository-layout) to locate implementations and tests. The sections below describe the current contracts; Phase 4 remains outside the implemented API.
+Read the [hard rules](#hard-rules) and [development workflow](#development-environment) before changing code. Use the [repository layout](#repository-layout) to locate implementations and tests. The sections below describe the current public contracts.
 
 Contract reference: [Core API](#core-api) · [Routing](#routing) · [Route groups](#route-groups-phase-2) · [HTTP semantics](#http-semantics) · [Node adapter](#nodejs-adapter-oleojsnode) · [Standard filters](#standard-filters-phase-3).
 
@@ -80,10 +80,13 @@ src/
   context-key.ts            # contextKey
   context-defaults.ts       # shared EMPTY_PARAMS and executionCtx stub
   http-method.ts            # method validation and Fetch-forbidden methods
+  http-problem.ts           # shared problem type and rendering, with bodyless HEAD handling
   <module>.ts               # core modules (kebab-case)
   routing/
     route.ts                # immutable Route/RouteGroup values, helpers, group, internal kind checks
-    router.ts               # group flattening, filter composition, dispatch, default responses
+    router.ts               # filter composition, dispatch, default responses
+    walk.ts                 # group expansion shared by routing and documentation
+    pattern.ts              # definition-time path validation and segment encoding
     trie.ts                 # segment trie: definition checks, matching, Allow lists
   filters/
     index.ts                # `oleo.js/filters` entry
@@ -97,11 +100,20 @@ src/
   node/
     index.ts                # `oleo.js/node` entry
     listener.ts             # toNodeListener: ingress, egress, errors, disconnects
+  contract/
+    index.ts                # `oleo.js/contract` public entry
+    types.ts / standard-schema.ts # public contracts and structural schema interfaces
+    contract.ts             # Route creation, metadata, and full-path checks
+    definition.ts           # declaration validation and snapshots
+    validate.ts             # input extraction, schema validation, and problem responses
+    openapi.ts              # document generation, security metadata, default errors
+    json-schema.ts          # JSON copying and reference relocation
 test/
   portable/
     <module>.test.ts        # portable runtime tests, including generated properties
     arbitraries.ts          # shared input generators and deterministic run settings
     runtime-baseline.test.ts # checks the runtime assumptions the core relies on
+    contract/              # input, document, endpoint integration, and property tests
     routing/
       router.test.ts        # route helpers, dispatch, HTTP semantics
       router.property.test.ts # routing and grouped-filter properties through the public API
@@ -125,6 +137,7 @@ test/
     filters.test-d.ts       # filter options and preservation of environment/parameter inference
     composition.test-d.ts   # combined environments and the one-call withFilters entry
     transform-filters.test-d.ts # transform callback inference and public option types
+    contract.test-d.ts      # validated input, environment, group and filter inference
 vitest.config.ts            # projects: portable, node, types
 vitest.workers.config.ts    # portable tests inside workerd
 .oxlintrc.json
@@ -135,8 +148,9 @@ dist/                       # build output, not committed
 ### Module boundaries
 
 - Portable packages never import adapters. Adapters may import portable packages.
-- `src/index.ts`, `src/filters/index.ts`, and `src/node/index.ts` are the public export boundaries. Internal modules import their dependencies directly; no internal barrel is needed under `routing/`.
-- `routing/route.ts` only creates immutable values and owns their internal tags. Validation and filter application stay in `router()`; do not move them into route helpers or `group()`.
+- `src/index.ts`, `src/filters/index.ts`, `src/contract/index.ts`, and `src/node/index.ts` are the public export boundaries. Internal modules import their dependencies directly; no internal barrel is needed under `routing/`.
+- `routing/route.ts` creates immutable values, owns their internal tags, and stores optional construction checks. Router and OpenAPI construction invoke these checks with the full path; route helpers and `group()` do not validate partial paths.
+- The Contract module imports the core; the core never imports Contract. Group walking and pattern rules are shared without invoking filters during document generation. Problem rendering is shared independently of the filter module.
 - Shared context defaults and HTTP method rules live outside `routing/`, so `fetch.ts` and the Node adapter do not depend on routing implementation modules.
 - Keep inference machinery in `types.ts` and beside route definitions. See the [type inference contract](#type-inference-contract) before changing signatures.
 
@@ -437,7 +451,7 @@ The two intentional differences from `URLPattern`:
 
 ## Route groups (Phase 2)
 
-*Status: values are defined in `src/routing/route.ts` and flattened in `src/routing/router.ts`. Runtime tests are in `test/portable/routing/group.test.ts`, and type tests in the "route groups" block of `test/types/inference.test-d.ts`.*
+*Status: values are defined in `src/routing/route.ts` and flattened through `src/routing/walk.ts`. Runtime tests are in `test/portable/routing/group.test.ts`, and type tests in the "route groups" block of `test/types/inference.test-d.ts`.*
 
 A group joins a prefix onto its routes when `router()` is called and flattens them into the same trie as every other route. At run time a grouped route is indistinguishable from writing its full pattern directly. There is no run-time mounting and no hidden path state in `Context`.
 
@@ -621,7 +635,7 @@ Bun and Deno implement `node:http`, and the built adapter has been observed work
 
 These are not part of the core. Compose them as filters or separate packages instead:
 
-- **Schema validation.** Bring Zod, Valibot, TypeBox, or Typia through a filter.
+- **Schema validation rules.** Bring an application-owned validator through a filter or the optional `oleo.js/contract` integration; the core provides no schema language or validation engine.
 - **Request/response wrappers or response builders.**
 - **Implicit URL normalization** (trailing slashes, case folding, duplicate slashes). Normalize in a filter if needed.
 - **File-system routing and view engines.**
@@ -846,3 +860,74 @@ const app = withFilters(routes,
 ```
 
 Tests are in `test/portable/filters/transforms.test.ts`, `test/portable/filters/response-headers.test.ts`, and `test/types/transform-filters.test-d.ts`. They cover asynchronous callbacks, failure propagation, context visibility, immutable header handling, multiple cookies, streaming bodies, and generated header/body preservation.
+
+## Contracts
+
+`oleo.js/contract` exports `contract`, `toOpenApi`, their configuration/input/document types, and structural Standard Schema types. It adds no runtime dependency and does not change core handlers or filters. The [complete example](examples/contract.ts) implements a list endpoint, a create endpoint, and an authenticated read endpoint; [its schemas](examples/project-schemas.ts) are application-owned examples of the protocol, not a new oleo schema language.
+
+### Definitions and inference
+
+`contract(definition, handler)` returns a normal `Route<E, TBase>`. Its handler receives `(request, ctx, input)` and returns a native Response or a promise. `ContractInput<RequestDefinition>` infers schema outputs, including transformations and defaults. Env flows from `router<Env>()` or a `Route<Env>` / `RouteGroup<Env>` annotation; full raw path parameters accumulate through groups as before.
+
+| Field | Contract |
+| --- | --- |
+| `method`, `path` | Same method and relative pattern rules as core routes; full paths are checked after groups are expanded. |
+| `operationId` | Required nonempty string, unique within each generated document. |
+| `summary` | Optional string for the operation's documentation. |
+| `request.params`, `.query`, `.headers` | Maps of names to `{ schema, required?, description? }`; all values originate as decoded strings. |
+| `request.json` | Standard Schema validator for a required JSON body. |
+| `responses` | Nonempty map of exact status codes 100–599 or `default` to `{ description, content? }`. Each content media type maps to `{ schema }`. These describe documentation only. |
+| `security` | OpenAPI security requirement array. It does not enforce authentication. |
+
+The handler's `input` includes only declared sources and fields. `ctx.params` is unchanged: a raw ID can be a string while `input.params.id` is a number. Schema outputs preserve null, undefined, transformations, and defaults; `required: false` does not add undefined to a schema's output type. Optional declaration sources and fields remain optional in the inferred input.
+
+Use `const request = { ... } satisfies ContractRequest` to check a reusable declaration while retaining its concrete schema types. An annotation such as `const request: ContractRequest = ...` widens its schemas: JSON and scalar field outputs become unknown, and sources may be absent. Narrow these values before using them; checking only for undefined does not exclude null.
+
+Configuration containers are copied when the Contract is defined, including nested response and security declarations. Schema instances are opaque and remain application-owned; do not change their validation/export behavior after registration. Schema interface and handler/configuration shape errors throw at definition time. Method, full path, and declared path parameter names are checked during router or document construction, including for JavaScript callers and nonliteral paths.
+
+### Input processing
+
+- Parameters default to `required: true`; path parameters cannot be optional. Optional query/header fields pass `undefined` to the schema when absent. The resulting field remains an own property even when its validated value is undefined.
+- Query decoding follows URLSearchParams semantics, including `+` as a space. Repeated occurrences of a declared scalar parameter fail with 422. Undeclared query/header fields are ignored; array query serialization is not supported.
+- Header lookup is case-insensitive, while output property names retain the declaration's spelling. Case-insensitive duplicate header declarations are rejected. Native Headers semantics apply to combined values.
+- Path values come from the router's decoded parameters; declared names must occur in the full path. Undeclared path parameters remain accessible through `ctx.params`.
+- JSON parsing precedes schema validation. A null body returns 400. With a body present, an absent or unsupported media type returns 415; `application/json` is case-insensitive and accepts media type parameters. Empty or malformed JSON returns 400. JSON `null` is parsed successfully and passed to the schema.
+- The body is read once. `input.json` holds the validated result; handlers must not read the consumed Request body again. Routes without a JSON declaration leave bodies untouched.
+- Schemas validate sequentially in params, query, headers, json order; fields follow declaration order. Synchronous and asynchronous results are accepted. Every reported issue is collected, but a validator may itself choose to report only one issue.
+- Missing required parameters, duplicate scalar queries, and schema failures produce 422. The handler is skipped on all expected input failures. Read failures, validator throws/rejections, malformed schema results, and malformed issues propagate to outer filters instead of becoming client errors.
+
+Validation errors are RFC 9457 problem documents with `Content-Type: application/problem+json`:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Unprocessable Content",
+  "status": 422,
+  "errors": [
+    { "source": "query", "path": ["limit"], "message": "Limit must be between 1 and 100" },
+    { "source": "json", "path": ["name"], "message": "Name is required" }
+  ]
+}
+```
+
+`source` is `params`, `query`, `headers`, or `json`. Paths prepend the declared parameter name to the validator's path; JSON issues use the schema path directly. Standard Schema path-segment objects are unwrapped and symbol keys are converted to strings. Messages come from the application-owned validator and must be suitable for clients; oleo does not add raw inputs, stacks, or vendor metadata. A valid failure result has at least one issue; a valid success result has a `value`, which may be undefined, null, false, zero, or an empty string.
+
+Contract-generated 400/415/422 responses do not require `problemDetails()`. Wrap the whole router with that filter to format routing/authentication errors and unexpected exceptions as well. HEAD responses remain bodyless. Request matching/decoding happens first, then group filters, then Contract input validation and the handler; malformed path encoding remains the router's 400 behavior.
+
+### OpenAPI generation
+
+`toOpenApi(options, ...routes)` synchronously generates OpenAPI **3.1.1** from Route/RouteGroup definitions. It validates the entire route tree, including ordinary routes, but only documents Contract routes. No filter is applied and no handler, validation callback, network request, or remote reference resolver runs during generation. Application schema exporters do run.
+
+Options include required `info: { title, version, description? }`, optional `securitySchemes`, and optional `toJsonSchema(schema, direction)`. The provided callback takes precedence over native export. Otherwise the schema must provide `~standard.jsonSchema.input/output`; oleo requests `target: 'draft-2020-12'`. Input declarations use the `input` direction; responses use `output`. Exporters must accurately describe wire inputs, rather than only the transformed TypeScript output. Unsupported conversion throws instead of silently emitting an unconstrained schema.
+
+- Group prefixes, segment encoding and trailing slashes follow routing. Named parameters become `{name}`; undeclared path schemas default to required strings. Methods share a path item, and only explicitly declared methods are emitted.
+- A JSON declaration adds default 400, 415 and 422 responses; declared scalar validations add 422; any named path adds 400 for decoding failures. Defaults describe Problem Details, including the 422 issue list. Use `problemDetails()` around the router for that representation of routing errors. Explicit same-status responses replace defaults entirely; `default` does not suppress exact generated statuses.
+- Authentication and business errors are explicit response declarations. Security schemes support HTTP authentication, API keys, OAuth2, OpenID Connect, and mutual TLS metadata. References must name declared schemes, and requirement values must be string arrays. OAuth2 and OpenID Connect arrays list scopes; other scheme types may list required role names, as defined by [OpenAPI 3.1.1](https://spec.openapis.org/oas/v3.1.1.html#security-requirement-object). Empty arrays are valid for all supported scheme types. Metadata does not enforce roles or establish the runtime presence of a ContextKey or an authentication filter.
+- Wildcard Contract paths and methods outside OpenAPI's exact uppercase method set cannot be represented and throw. Ordinary wildcard/custom-method routes can still be mixed in and are omitted. `Authorization`, `Accept`, and `Content-Type` header parameter declarations cannot be exported because OpenAPI ignores them; express those requirements using security/content metadata instead.
+- Schemas are inlined without automatic component deduplication. Local JSON pointers and anchors in anonymous schema resources are relocated to their embedded positions; both `$ref: ""` and `$ref: "#"` reference that resource's embedded root. Data keywords such as examples and const are copied without rewriting their contents. Explicit `$id` resource scopes and external references are preserved; external references are never fetched. Dynamic references in anonymous resources require an explicit `$id` and otherwise throw.
+- Exported schema data must be JSON-serializable objects or booleans. Cyclic JavaScript objects, serialization hooks, and malformed known subschema containers are rejected. This is not a general JSON Schema validator; keyword semantics remain the exporter's responsibility.
+- Duplicate operation IDs, conflicting routes, invalid full-path parameter declarations, unknown security references, and unsupported schema conversion fail during generation. The resulting document shares no mutable JSON containers with declarations or earlier documents.
+
+Responses remain native and are never read or validated against `responses`. Form/multipart parsing, array query parameters, client generation, document serving and UI hosting are outside this module. Applications can serve the generated object through a normal route if desired.
+
+Runtime and generated tests are in `test/portable/contract/`; inference tests are in `test/types/contract.test-d.ts`. They cover the three example endpoints, error aggregation and precedence, schema/stream failures, HEAD, configuration snapshots, schema reference scopes, prototype-sensitive names, full-path documentation, and composed environments. The executable examples are also checked against a packed package before delivery.

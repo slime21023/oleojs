@@ -1,10 +1,9 @@
 import { EMPTY_PARAMS } from '../context-defaults.ts'
+import { invalidPattern as invalid, parsePattern } from './pattern.ts'
 import type { Params } from '../types.ts'
 
 const CHAR_SLASH = 47
 const EMPTY_SEGMENT = -1
-const SYNTAX_CHARS = /[(){}?+\\]/
-const PARAM_NAME = /^[\p{ID_Start}$_][\p{ID_Continue}$‌‍]*$/u
 
 /** A selected route contains malformed percent escapes or invalid UTF-8 in its parameters. */
 export const MALFORMED: unique symbol = Symbol('malformed')
@@ -40,31 +39,6 @@ function staticKey(segment: string): number {
   return segment === '' ? EMPTY_SEGMENT : segment.charCodeAt(0)
 }
 
-function invalid(pattern: string, reason: string): TypeError {
-  return new TypeError(`Invalid route pattern "${pattern}": ${reason}`)
-}
-
-function canonicalSegment(segment: string, last: boolean, pattern: string): string {
-  if (segment === '') {
-    if (last) return ''
-    throw invalid(pattern, 'empty segment')
-  }
-  if (segment.includes(':') || segment.includes('*')) {
-    throw invalid(pattern, `"${segment}": ":" and "*" must form a whole segment`)
-  }
-  if (SYNTAX_CHARS.test(segment)) {
-    throw invalid(pattern, `"${segment}": unsupported URLPattern syntax`)
-  }
-  // Canonicalize once at definition time to agree with URLPattern's pathname encoding.
-  const url = new URL('http://canonical.invalid/')
-  url.pathname = `/${segment}`
-  const canonical = url.pathname.slice(1)
-  if (canonical === '' || canonical.includes('/')) {
-    throw invalid(pattern, `"${segment}" is a dot segment and can never match`)
-  }
-  return canonical
-}
-
 /** Segment trie with method-aware matching and reusable state for the current match. */
 export class Trie<T> {
   readonly #root = createNode<T>('', '')
@@ -74,25 +48,18 @@ export class Trie<T> {
   params: Params = EMPTY_PARAMS
 
   /** Insert a route, rejecting invalid patterns and conflicts with earlier definitions. */
-  insert(method: string, pattern: string, value: T): void {
-    if (pattern.charCodeAt(0) !== CHAR_SLASH) throw invalid(pattern, 'must start with "/"')
-    const segments = pattern.slice(1).split('/')
+  insert(method: string, pattern: string, value: T): readonly string[] {
+    const segments = parsePattern(pattern)
     let node = this.#root
     let hasParams = false
-    const names = new Set<string>()
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i]!
-      const last = i === segments.length - 1
       if (segment === '*') {
-        if (!last) throw invalid(pattern, '"*" must be the last segment')
         node.wildcard ??= createNode('', '*')
         node = node.wildcard
         hasParams = true
       } else if (segment.startsWith(':')) {
         const name = segment.slice(1)
-        if (!PARAM_NAME.test(name)) throw invalid(pattern, `"${segment}" is not a valid parameter`)
-        if (names.has(name)) throw invalid(pattern, `duplicate parameter ":${name}"`)
-        names.add(name)
         if (node.param !== undefined && node.param.name !== name) {
           throw invalid(pattern, `":${name}" conflicts with ":${node.param.name}" at the same position`)
         }
@@ -100,12 +67,13 @@ export class Trie<T> {
         node = node.param
         hasParams = true
       } else {
-        node = this.#staticChild(node, canonicalSegment(segment, last, pattern))
+        node = this.#staticChild(node, segment)
       }
     }
     if (node.handlers.has(method)) throw invalid(pattern, `duplicate route for ${method}`)
     node.handlers.set(method, value)
     node.hasParams = hasParams
+    return segments
   }
 
   /**

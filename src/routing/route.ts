@@ -6,6 +6,17 @@ declare const BASE: unique symbol
 // Distinguish route/group values from options without relying on their public fields.
 const KIND = Symbol('oleo.kind')
 
+// Optional definition checks let extensions inspect full paths without core imports of extensions.
+const validations = new WeakMap<object, (segments: readonly string[]) => void>()
+
+export function setRouteValidation(route: object, validate: (segments: readonly string[]) => void): void {
+  validations.set(route, validate)
+}
+
+export function validateRoute(route: object, segments: readonly string[]): void {
+  validations.get(route)?.(segments)
+}
+
 /**
  * An immutable route definition created by the route helpers and validated by `router()`.
  * `TBase` describes parameters that enclosing groups must supply.

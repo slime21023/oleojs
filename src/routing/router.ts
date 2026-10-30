@@ -2,10 +2,11 @@ import { compose } from '../compose.ts'
 import { EMPTY_PARAMS } from '../context-defaults.ts'
 import { checkMethod } from '../http-method.ts'
 import { pathEnd, pathStart } from '../path.ts'
-import type { HttpFilter, HttpHandler } from '../types.ts'
-import { getRouteKind } from './route.ts'
-import type { Route, RouteGroup, RouteItem } from './route.ts'
+import type { HttpHandler } from '../types.ts'
+import { validateRoute } from './route.ts'
+import type { RouteItem } from './route.ts'
 import { MALFORMED, Trie } from './trie.ts'
+import { walkRoutes } from './walk.ts'
 
 function withoutBody(res: Response): Response | Promise<Response> {
   if (res.body === null) return res
@@ -29,21 +30,11 @@ export function router<E = unknown>(...items: RouteItem<E, {}>[]): HttpHandler<E
   const trie = new Trie<HttpHandler<E, any>>()
 
   // Build group wrappers once per route so requests only run the already-composed handler.
-  const add = (item: unknown, prefix: string, inheritedFilters: readonly HttpFilter<E>[]): void => {
-    const kind = getRouteKind(item)
-    if (kind === 'route') {
-      const { method, pattern, handler } = item as Route<E, any>
-      checkMethod(method, prefix + pattern)
-      trie.insert(method, prefix + pattern, compose(...inheritedFilters)(handler))
-    } else if (kind === 'group') {
-      const { prefix: groupPrefix, filters, items: children } = item as RouteGroup<E, any>
-      const combinedFilters = [...inheritedFilters, ...filters]
-      for (const child of children) add(child, prefix + groupPrefix, combinedFilters)
-    } else {
-      throw new TypeError(`router() expects routes and groups${prefix ? ` (in group "${prefix}")` : ''}, got ${String(item)}`)
-    }
+  for (const { route, pattern, filters } of walkRoutes<E>(items)) {
+    checkMethod(route.method, pattern)
+    const segments = trie.insert(route.method, pattern, compose(...filters)(route.handler))
+    validateRoute(route, segments)
   }
-  for (const item of items) add(item, '', [])
 
   return (req, ctx) => {
     const { url, method } = req

@@ -48,7 +48,7 @@ console.log(await response.json()) // { userId: '42', postId: '7' }
 
 ## Available modules
 
-The package currently exposes three entry points: `oleo.js`, `oleo.js/filters`, and `oleo.js/node`.
+The package exposes four entry points: `oleo.js`, `oleo.js/filters`, `oleo.js/contract`, and `oleo.js/node`.
 
 | Module | Public API | Purpose |
 | --- | --- | --- |
@@ -63,9 +63,10 @@ The package currently exposes three entry points: `oleo.js`, `oleo.js/filters`, 
 | Problem details | `problemDetails`, `Problem`, `ProblemDetailsOptions` from `oleo.js/filters` | Convert thrown errors and empty error responses into problem documents. |
 | Request logging | `requestLogger`, `LogEntry`, `RequestLoggerOptions` from `oleo.js/filters` | Record the request outcome and duration, with optional application fields. |
 | Request/response transformations | `mapRequest`, `mapResponse`, `responseHeaders` from `oleo.js/filters` | Transform messages with synchronous or asynchronous callbacks, or set response headers. |
+| Contracts | `contract`, `toOpenApi` from `oleo.js/contract` | Validate inputs with application-owned schemas, infer their outputs, and generate OpenAPI 3.1.1 from the same routes. |
 | Node.js adapter | `toNodeListener` from `oleo.js/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. |
 
-Routing, composition, context, and Fetch APIs are exported from `oleo.js`. Filters and the Node.js adapter have their own entry points.
+Routing, composition, context, and Fetch APIs are exported from `oleo.js`. Filters, contracts, and the Node.js adapter have their own entry points.
 
 ### Routing and groups
 
@@ -215,13 +216,41 @@ createServer(toNodeListener(app)).listen(3000)
 
 The adapter also accepts an `env` option for application data. Server configuration and lifecycle remain under application control.
 
-## Planned extensions
+### Contracts and OpenAPI
 
-The routing core, route groups, middleware composition, context keys, Fetch entry point, all four standard filters, and Node.js adapter are implemented.
+`contract(definition, handler)` returns an ordinary Route. The handler receives `(request, ctx, input)`, where `input` contains only the declared sources, after validation and transformation. Schemas implement [Standard Schema](https://standardschema.dev/); the application chooses its validation library and rules.
 
-The remaining planned extension is **`oleo.js/contract`** for declarative contracts and OpenAPI generation. This entry point is not implemented or exported, and the API is not yet settled.
+```ts
+import { group, router, toFetch } from 'oleo.js'
+import { contract, toOpenApi } from 'oleo.js/contract'
+import { limitSchema } from './project-schemas.ts'
 
-Application-specific validation, rendering, and file-system conventions remain application responsibilities.
+const routes = group('/api', contract({
+  method: 'GET',
+  path: '/projects',
+  operationId: 'listProjects',
+  request: {
+    query: { limit: { schema: limitSchema, required: false } },
+  },
+  responses: { 200: { description: 'Requested page size' } },
+}, (_request, _ctx, { query }) => Response.json({ limit: query.limit })))
+
+const document = toOpenApi({
+  info: { title: 'Projects API', version: '1.0.0' },
+}, routes)
+
+export default toFetch(router(routes))
+```
+
+Here `limitSchema` turns an optional decimal string into a number, defaulting to 20. See the [complete list/create/authenticated-route example](docs/examples/contract.ts) and its [application-owned schemas](docs/examples/project-schemas.ts).
+
+- Field failures produce `422` Problem Details containing an `errors` list. Invalid or missing JSON bodies produce `400`; unsupported or missing JSON media types produce `415`. Unexpected validator failures propagate to outer filters.
+- `request.json` consumes the body once. Use `input.json` inside the handler. Raw `ctx.params` stay strings even when `input.params` contains converted values.
+- `toOpenApi` reads definitions without invoking filters, handlers, or validators. It exports input/output JSON Schema through the schema's Standard JSON Schema capability or an application-supplied `toJsonSchema` callback. Missing export support is an error.
+- OpenAPI includes applicable `400`/`415`/`422` response descriptions; explicit responses override those defaults. Ordinary routes can be mixed in and are omitted from the document.
+- Response schemas describe documentation only: native responses and streaming bodies are not validated or read. Security metadata describes authentication; install `bearerAuth` or another filter to enforce it.
+
+See the [Contract reference](docs/project-reference.md#contracts) for validation rules, document generation limits, and error shapes. Schema rules, rendering, and file-system conventions remain application responsibilities.
 
 ## Development
 

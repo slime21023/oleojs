@@ -17,6 +17,10 @@
       "types": "./dist/filters/index.d.ts",
       "default": "./dist/filters/index.js"
     },
+    "./contract": {
+      "types": "./dist/contract/index.d.ts",
+      "default": "./dist/contract/index.js"
+    },
     "./node": {
       "types": "./dist/node/index.d.ts",
       "default": "./dist/node/index.js"
