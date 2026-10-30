@@ -1,0 +1,4 @@
+interface:
+  display_name: "Readable TypeScript Engineering"
+  short_description: "Write and review readable, type-safe TypeScript code."
+  default_prompt: "Use $develop-readable-typescript to implement, refactor, or review TypeScript code according to the coding guidelines."

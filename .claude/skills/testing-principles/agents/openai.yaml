@@ -1,0 +1,4 @@
+interface:
+  display_name: "Testing Principles"
+  short_description: "Language-agnostic principles for writing and reviewing tests."
+  default_prompt: "Use $testing-principles to write, update, or review tests for the change."

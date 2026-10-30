@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "skills": {
+    "c3-coding-guidelines": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/c3-coding-guidelines/SKILL.md",
+      "computedHash": "ab08527ddc585ab2845385ce11603ad52ef614531b28f44e16f5c9b65ae664fa"
+    },
+    "cpp-coding-guidelines": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/cpp-coding-guidelines/SKILL.md",
+      "computedHash": "429eebcf9d3c97ba9d95f62e83ced3c2320345ac246b30375eaaae828078cbf6"
+    },
+    "develop-readable-typescript": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/develop-readable-typescript/SKILL.md",
+      "computedHash": "de28d122463cf584793790e0a02606eb4c360c19d28df5cdb884441262e81075"
+    },
+    "go-coding-guidelines": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/go-coding-guidelines/SKILL.md",
+      "computedHash": "2d3f59e5d8943f87cb02ed0335bbac9f716063504c12b0b941f90003752d3777"
+    },
+    "kotlin-coding-guidelines": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/kotlin-coding-guidelines/SKILL.md",
+      "computedHash": "89e66d40c34975fc311cba670af2a7f49582d1b27d9e8114dee51fa81754dd08"
+    },
+    "nim-coding-guidelines": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/nim-coding-guidelines/SKILL.md",
+      "computedHash": "d5876e59110d5062f2275b9d8f15b1afc7b029b3bfc526bb601891d69894af4a"
+    },
+    "python-coding-guidelines": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/python-coding-guidelines/SKILL.md",
+      "computedHash": "725f5004d4a696d67333ddd28bad6fcd27ad31418c06e2581009912d030c4073"
+    },
+    "rust-coding-guidelines": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-coding-guidelines/SKILL.md",
+      "computedHash": "4058d6b5c23cddc94f0f0099ed0f375d4fb37c6a29b29eb4070d319ebf334754"
+    },
+    "testing-principles": {
+      "source": "slime21023/CodingStandard-skills",
+      "sourceType": "github",
+      "skillPath": "skills/testing-principles/SKILL.md",
+      "computedHash": "db57f770b091eafeb85a4569d5d91ca21f38c557d60944e3216d70b7c5a68d92"
+    }
+  }
+}
