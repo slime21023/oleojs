@@ -4,6 +4,7 @@ import type { Params } from '../types.ts'
 
 const CHAR_SLASH = 47
 const EMPTY_SEGMENT = -1
+const NO_NAMES: readonly string[] = Object.freeze([])
 
 /** A selected route contains malformed percent escapes or invalid UTF-8 in its parameters. */
 export const MALFORMED: unique symbol = Symbol('malformed')
@@ -11,23 +12,23 @@ export const MALFORMED: unique symbol = Symbol('malformed')
 // A uniform node shape keeps property access consistent across static and dynamic branches.
 interface Node<T> {
   readonly segment: string // static nodes: the canonical segment text
-  readonly name: string // param nodes: the parameter name; wildcard nodes: '*'
   readonly statics: Map<number, Node<T>[]> // first-code-unit buckets avoid allocating segment keys
   param: Node<T> | undefined
   wildcard: Node<T> | undefined
   readonly handlers: Map<string, T>
-  hasParams: boolean // terminal nodes: whether the full pattern captures parameters
+  // Terminal nodes: parameter names in path order ('*' for a wildcard), shared by every method.
+  // Names belong to routes rather than positions, so diverging routes may name a position differently.
+  paramNames: readonly string[] | undefined
 }
 
-function createNode<T>(segment: string, name: string): Node<T> {
+function createNode<T>(segment: string): Node<T> {
   return {
     segment,
-    name,
     statics: new Map(),
     param: undefined,
     wildcard: undefined,
     handlers: new Map(),
-    hasParams: false,
+    paramNames: undefined,
   }
 }
 
@@ -41,8 +42,11 @@ function staticKey(segment: string): number {
 
 /** Segment trie with method-aware matching and reusable state for the current match. */
 export class Trie<T> {
-  readonly #root = createNode<T>('', '')
+  readonly #root = createNode<T>('')
   #malformed = false
+  // The selected route's names and the next capture slot; captures arrive from the last segment back.
+  #names: readonly string[] = []
+  #nameIndex = 0
 
   /** Last match's parameters; read before invoking user code that could match again. */
   params: Params = EMPTY_PARAMS
@@ -51,28 +55,32 @@ export class Trie<T> {
   insert(method: string, pattern: string, value: T): readonly string[] {
     const segments = parsePattern(pattern)
     let node = this.#root
-    let hasParams = false
+    const names: string[] = []
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i]!
       if (segment === '*') {
-        node.wildcard ??= createNode('', '*')
+        node.wildcard ??= createNode('')
         node = node.wildcard
-        hasParams = true
+        names.push('*')
       } else if (segment.startsWith(':')) {
-        const name = segment.slice(1)
-        if (node.param !== undefined && node.param.name !== name) {
-          throw invalid(pattern, `":${name}" conflicts with ":${node.param.name}" at the same position`)
-        }
-        node.param ??= createNode('', name)
+        node.param ??= createNode('')
         node = node.param
-        hasParams = true
+        names.push(segment.slice(1))
       } else {
         node = this.#staticChild(node, segment)
       }
     }
+    // Routes ending at the same node describe one path, so their parameter names must agree.
+    const existing = node.paramNames
+    if (existing !== undefined) {
+      const conflict = names.findIndex((name, index) => name !== existing[index])
+      if (conflict !== -1) {
+        throw invalid(pattern, `":${names[conflict]}" conflicts with ":${existing[conflict]}" at the same position`)
+      }
+    }
     if (node.handlers.has(method)) throw invalid(pattern, `duplicate route for ${method}`)
     node.handlers.set(method, value)
-    node.hasParams = hasParams
+    node.paramNames ??= Object.freeze(names)
     return segments
   }
 
@@ -116,7 +124,7 @@ export class Trie<T> {
     }
     let child = bucket.find((candidate) => candidate.segment === segment)
     if (child === undefined) {
-      child = createNode(segment, '')
+      child = createNode(segment)
       bucket.push(child)
     }
     return child
@@ -144,7 +152,7 @@ export class Trie<T> {
     if (param !== undefined && segEnd > segStart) {
       const found = this.#matchChild(param, method, url, segEnd, last, end)
       if (found !== undefined) {
-        this.#capture(param.name, url, segStart, segEnd)
+        this.#capture(url, segStart, segEnd)
         return found
       }
     }
@@ -152,7 +160,7 @@ export class Trie<T> {
     const wildcard = node.wildcard
     if (wildcard !== undefined && handlerFor(wildcard, method) !== undefined) {
       this.#initializeParams(wildcard)
-      this.#capture('*', url, segStart, end)
+      this.#capture(url, segStart, end)
       return wildcard
     }
     return undefined
@@ -166,12 +174,18 @@ export class Trie<T> {
   }
 
   #initializeParams(terminal: Node<T>): void {
+    // Only nodes with handlers are selected, and inserting a handler always records the names.
+    const names = terminal.paramNames ?? NO_NAMES
+    this.#names = names
+    this.#nameIndex = names.length
     // Parameter names such as __proto__ must be ordinary own properties.
-    this.params = terminal.hasParams ? Object.create(null) : EMPTY_PARAMS
+    this.params = names.length > 0 ? Object.create(null) : EMPTY_PARAMS
   }
 
   // Decode while unwinding the selected route so failed branches cannot leak captures or errors.
-  #capture(name: string, url: string, start: number, end: number): void {
+  // Unwinding visits the last segment first, so the selected route's names are consumed in reverse.
+  #capture(url: string, start: number, end: number): void {
+    const name = this.#names[--this.#nameIndex]!
     const params = this.params as Record<string, string>
     const raw = url.slice(start, end)
     if (!raw.includes('%')) {

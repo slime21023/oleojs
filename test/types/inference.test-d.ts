@@ -4,8 +4,8 @@ import { describe, expectTypeOf, it } from 'vitest'
 import { compose } from '../../src/compose.ts'
 import { contextKey } from '../../src/context-key.ts'
 import { toFetch } from '../../src/fetch.ts'
-import { type RouteGroup, get, group, router } from '../../src/index.ts'
-import type { FetchHandler, HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from '../../src/types.ts'
+import { type Route, type RouteGroup, get, group, router, routesFor } from '../../src/index.ts'
+import type { ExecutionContext, FetchHandler, HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from '../../src/types.ts'
 
 interface Env {
   DB: { query(sql: string): string }
@@ -197,11 +197,136 @@ describe('route groups', () => {
       }))
     router(unannotated())
   })
+
+  it('rejects an item needing a parameter its group does not supply, with or without options', () => {
+    const needsUser: Route<unknown, { userId: string }> = get('/settings', ok)
+    group('/users/:userId', needsUser)
+    group('/users/:userId', { filters: [logger] }, needsUser)
+    // @ts-expect-error -- the prefix supplies teamId, not userId
+    group('/teams/:teamId', needsUser)
+    // @ts-expect-error -- the same check applies after options
+    group('/teams/:teamId', { filters: [logger] }, needsUser)
+    // @ts-expect-error -- options are accepted only before the items
+    group('/users/:userId', needsUser, { filters: [logger] })
+  })
+
+  it('checks a leading group as an item, not as options with filters', () => {
+    const userGroup: RouteGroup<unknown, { userId: string }> = group('/posts', get('', ok))
+    group('/users/:userId', userGroup)
+    // @ts-expect-error -- a group has filters, but it must still satisfy the item check
+    group('/teams/:teamId', userGroup)
+    // @ts-expect-error -- also when nested below the prefix that is missing userId
+    group('/teams/:teamId', group('/x', userGroup))
+  })
 })
 
 describe('handlers', () => {
   it('accepts clients as handlers', () => {
     const client = (req: Request) => fetch(req)
     expectTypeOf(client).toExtend<HttpHandler>()
+  })
+})
+
+describe('fetch entry', () => {
+  const request = new Request('https://test/')
+
+  it('requires env when the handler needs one', () => {
+    const app = toFetch(router<Env>(get('/', ok)))
+    // @ts-expect-error -- Env is required
+    void app.fetch(request)
+    // @ts-expect-error -- the environment must have the handler's type
+    void app.fetch(request, { KV: '' })
+    void app.fetch(request, { DB: { query: (sql) => sql } })
+    void app.fetch(request, { DB: { query: (sql) => sql } }, { waitUntil() {} })
+  })
+
+  it('keeps env optional when undefined is a valid environment', () => {
+    void toFetch(router(get('/', ok))).fetch(request)
+    void toFetch<Env | undefined>(ok).fetch(request)
+    expectTypeOf<Parameters<FetchHandler['fetch']>>().toEqualTypeOf<[Request, env?: unknown, executionCtx?: ExecutionContext]>()
+  })
+
+  it('types object-literal handlers contextually', () => {
+    const app: FetchHandler<Env> = {
+      fetch: async (req, env, executionCtx) => {
+        expectTypeOf(env).toEqualTypeOf<Env>()
+        expectTypeOf(executionCtx).toEqualTypeOf<ExecutionContext | undefined>()
+        return ok()
+      },
+    }
+    expectTypeOf(app).toExtend<FetchHandler<Env>>()
+  })
+})
+
+describe('environment-bound helpers', () => {
+  it('types separately declared routes with the bound environment', () => {
+    const { get: getWithEnv, post: postWithEnv } = routesFor<Env>()
+    const list = getWithEnv('/items/:id', (req, ctx) => {
+      expectTypeOf(ctx.env).toEqualTypeOf<Env>()
+      expectTypeOf(ctx.params).toEqualTypeOf<{ readonly id: string }>()
+      return ok()
+    })
+    expectTypeOf(list).toEqualTypeOf<Route<Env>>()
+    const create = postWithEnv('/items', ok)
+    router<Env>(list, create)
+    // @ts-expect-error -- an Env route cannot go into a router of another env
+    router<OtherEnv>(list)
+  })
+
+  it('still infers enclosing parameters inline', () => {
+    const needsDb: HttpFilter<Env> = (next) => (req, ctx) => next(req, ctx)
+    const helpers = routesFor<Env>()
+    router<Env>(helpers.group('/users/:userId', { filters: [needsDb] }, helpers.get('/posts/:postId', (req, ctx) => {
+      expectTypeOf(ctx.params).toEqualTypeOf<{ readonly userId: string; readonly postId: string }>()
+      expectTypeOf(ctx.env).toEqualTypeOf<Env>()
+      return ok()
+    })))
+  })
+
+  it('types the inline routes of a group declared on its own, unlike an unannotated core group', () => {
+    const { get: getWithEnv, group: groupWithEnv } = routesFor<Env>()
+    const users = groupWithEnv('/users/:userId',
+      getWithEnv('/profile', (req, ctx) => {
+        expectTypeOf(ctx.params).toEqualTypeOf<{ readonly userId: string }>()
+        expectTypeOf(ctx.env).toEqualTypeOf<Env>()
+        return ok()
+      }),
+      // Nested inline inside a parameterized group, the core group infers the enclosing parameters.
+      group('/posts', get('/:postId', (req, ctx) => {
+        expectTypeOf(ctx.params).toEqualTypeOf<{ readonly userId: string; readonly postId: string }>()
+        return ok()
+      })),
+    )
+    expectTypeOf(users).toEqualTypeOf<RouteGroup<Env>>()
+    router<Env>(users)
+  })
+
+  it('binds the parameters of the groups a separate route will be placed in', () => {
+    const { get: userGet, group: userGroup } = routesFor<Env, ParamsOf<'/users/:userId'>>()
+    const settings = userGet('/settings', (req, ctx) => {
+      expectTypeOf(ctx.params).toEqualTypeOf<{ readonly userId: string }>()
+      return ok()
+    })
+    const posts = userGroup('/posts/:postId', get('', (req, ctx) => {
+      expectTypeOf(ctx.params).toEqualTypeOf<{ readonly userId: string; readonly postId: string }>()
+      return ok()
+    }))
+    router<Env>(group('/users/:userId', settings, posts))
+    // @ts-expect-error -- the prefix supplies teamId, not userId
+    router<Env>(group('/teams/:teamId', settings))
+    // @ts-expect-error -- a route requiring userId cannot be placed at the top level
+    router<Env>(posts)
+  })
+
+  it('rejects params declared by neither the bound base nor the pattern', () => {
+    routesFor<Env>().get('/x', (req, ctx) => {
+      // @ts-expect-error -- not declared
+      void ctx.params.nope
+      return ok()
+    })
+  })
+
+  it('shares the existing helpers at runtime', () => {
+    expectTypeOf(routesFor<Env>().get).toBeFunction()
   })
 })

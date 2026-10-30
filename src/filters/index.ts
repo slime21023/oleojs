@@ -1,3 +1,5 @@
+export { bodyLimit } from './body-limit.ts'
+export type { BodyLimitOptions } from './body-limit.ts'
 export { bearerAuth } from './bearer-auth.ts'
 export type { BearerAuthOptions } from './bearer-auth.ts'
 export { cors } from './cors.ts'

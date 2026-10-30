@@ -4,8 +4,10 @@ import type { AddressInfo, Server } from 'node:net'
 import { connect as netConnect } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { STUB_EXECUTION_CTX } from '../../src/context-defaults.ts'
+import { toFetch } from '../../src/fetch.ts'
+import { bodyLimit } from '../../src/filters/index.ts'
 import type { ExecutionContext, FetchHandler } from '../../src/types.ts'
-import { type NodeListener, type NodeListenerOptions, toNodeListener } from '../../src/node/listener.ts'
+import { type NodeListener, type NodeListenerArgs, toNodeListener } from '../../src/node/listener.ts'
 
 const servers: Server[] = []
 afterEach(async () => {
@@ -18,8 +20,8 @@ async function listen(server: Server): Promise<number> {
   return (server.address() as AddressInfo).port
 }
 
-function serve<E>(app: FetchHandler<E>, options?: NodeListenerOptions<E>): Promise<number> {
-  return listen(createServer(toNodeListener(app, options)))
+function serve<E>(app: FetchHandler<E>, ...options: NodeListenerArgs<E>): Promise<number> {
+  return listen(createServer(toNodeListener(app, ...options)))
 }
 
 const fetchable = (fetch: (request: Request) => Response | Promise<Response>): FetchHandler => ({
@@ -87,6 +89,37 @@ describe('ingress', () => {
     const port = await serve(app, { env: { DB: 'db' } })
     await send(port, 'GET', '/')
     expect(seen).toEqual([{ DB: 'db' }, STUB_EXECUTION_CTX])
+  })
+
+  it('discards an unread request body so the connection serves the next request', async () => {
+    const port = await serve(fetchable(() => new Response('ignored')))
+    for (let i = 0; i < 2; i++) {
+      expect((await send(port, 'POST', '/', {}, 'x'.repeat(4 * 1024 * 1024))).body).toBe('ignored')
+    }
+    expect((await send(port, 'GET', '/')).body).toBe('ignored')
+  })
+
+  it('delivers the 413 when bodyLimit cancels an oversized body mid-stream', async () => {
+    const app = toFetch(bodyLimit({ maxBytes: 1024 })(async (request) => new Response(await request.text())))
+    const port = await serve(app)
+    const tooLarge = await send(port, 'POST', '/', {}, 'x'.repeat(4 * 1024 * 1024))
+    expect(tooLarge.status).toBe(413)
+    const accepted = await send(port, 'POST', '/', {}, 'x'.repeat(1024))
+    expect([accepted.status, accepted.body.length]).toEqual([200, 1024])
+  })
+
+  it('requires options.env exactly when the application needs an environment', () => {
+    const envApp: FetchHandler<{ DB: string }> = { fetch: async () => new Response() }
+    const optionalApp: FetchHandler<{ DB: string } | undefined> = { fetch: async () => new Response() }
+    // @ts-expect-error -- the application needs an environment
+    toNodeListener(envApp)
+    // @ts-expect-error -- options without env are not enough
+    toNodeListener(envApp, { trustProxy: true })
+    // @ts-expect-error -- the environment must have the application's type
+    toNodeListener(envApp, { env: { DB: 1 } })
+    toNodeListener(envApp, { env: { DB: 'db' }, trustProxy: true })
+    toNodeListener(optionalApp)
+    toNodeListener(echoUrl, { trustProxy: true })
   })
 
   it('accepts absolute-form request targets', async () => {

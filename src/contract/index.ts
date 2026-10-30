@@ -1,4 +1,5 @@
-export { contract } from './contract.ts'
+export { contract, contractFor } from './contract.ts'
+export type { BoundContract } from './contract.ts'
 export { toOpenApi } from './openapi.ts'
 export type { StandardIssue, StandardResult, StandardSchemaV1 } from './standard-schema.ts'
 export type {

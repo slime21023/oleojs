@@ -1,7 +1,6 @@
-import { contextKey, group, router, toFetch, withFilters } from 'oleo.js'
-import type { Route, RouteGroup } from 'oleo.js'
-import { contract, toOpenApi } from 'oleo.js/contract'
-import { bearerAuth, problemDetails } from 'oleo.js/filters'
+import { contextKey, router, routesFor, toFetch, withFilters } from 'oleo.js'
+import { contractFor, toOpenApi } from 'oleo.js/contract'
+import { bearerAuth, bodyLimit, problemDetails } from 'oleo.js/filters'
 import {
   createProjectSchema, cursorSchema, limitSchema, projectIdSchema, projectPageSchema, projectSchema,
 } from './project-schemas.ts'
@@ -17,7 +16,11 @@ export interface Env {
   verifyToken(token: string): Promise<User | undefined>
 }
 
-const listProjects: Route<Env> = contract({
+// Bind Env once so routes declared on their own need no Route<Env> annotations.
+const { group } = routesFor<Env>()
+const contract = contractFor<Env>()
+
+const listProjects = contract({
   method: 'GET', path: '/projects', operationId: 'listProjects', summary: 'List projects',
   request: { query: {
     limit: { schema: limitSchema, required: false },
@@ -26,7 +29,7 @@ const listProjects: Route<Env> = contract({
   responses: { 200: { description: 'Project page', content: { 'application/json': { schema: projectPageSchema } } } },
 }, async (_request, ctx, { query }) => Response.json(await ctx.env.projects.list(query)))
 
-const createProject: Route<Env> = contract({
+const createProject = contract({
   method: 'POST', path: '/projects', operationId: 'createProject', summary: 'Create a project',
   request: { json: createProjectSchema },
   responses: { 201: { description: 'Created project', content: { 'application/json': { schema: projectSchema } } } },
@@ -36,7 +39,7 @@ const createProject: Route<Env> = contract({
 })
 
 const userKey = contextKey<User>('user')
-const authenticatedProject: RouteGroup<Env> = group('', {
+const authenticatedProject = group('', {
   filters: [bearerAuth({ key: userKey, verify: (token, _request, ctx) => ctx.env.verifyToken(token) })],
 }, contract({
   method: 'GET', path: '/projects/:projectId', operationId: 'getProject', summary: 'Read a visible project',
@@ -56,12 +59,13 @@ const authenticatedProject: RouteGroup<Env> = group('', {
   return Response.json(project)
 }))
 
-export const routes: RouteGroup<Env> = group('/api', listProjects, createProject, authenticatedProject)
+export const routes = group('/api', listProjects, createProject, authenticatedProject)
 
 export const document = toOpenApi({
   info: { title: 'Projects API', version: '1.0.0' },
   securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } },
 }, routes)
 
-// Supply Env when invoking app.fetch(request, env), or from the hosting adapter.
-export default toFetch(withFilters(router(routes), problemDetails()))
+// app.fetch(request, env) requires Env; the hosting adapter or runtime supplies it in production.
+// bodyLimit bounds the JSON bodies that contracts read; problemDetails renders its 413.
+export default toFetch(withFilters(router(routes), problemDetails(), bodyLimit({ maxBytes: 64 * 1024 })))

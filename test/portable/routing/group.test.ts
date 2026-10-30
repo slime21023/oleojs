@@ -163,4 +163,9 @@ describe('group values', () => {
   it('treat a leading route as an item, not as options', () => {
     expect(group('/a', get('/x', ok), get('/y', ok)).items).toHaveLength(2)
   })
+
+  it('treat an explicit undefined first argument as absent options', () => {
+    const value = group('/a', undefined, get('/x', ok))
+    expect([value.filters, value.items.length]).toEqual([[], 1])
+  })
 })

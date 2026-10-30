@@ -53,8 +53,19 @@ export type HttpFilter<E = unknown> =
   (<TEnv extends E, P extends Params>(next: HttpHandler<TEnv, P>) => HttpHandler<TEnv, P>)
   & { readonly [FILTER_ENV]?: (env: E) => void }
 
+/**
+ * Arguments after the request: `env` may be omitted only when `undefined` is a valid environment.
+ * The check is deliberately non-distributive, so `unknown` and `Env | undefined` keep it optional.
+ */
+export type FetchArgs<E> = undefined extends E
+  ? [env?: E, executionCtx?: ExecutionContext]
+  : [env: E, executionCtx?: ExecutionContext]
+
 /** A Fetch entry point following the Workers call shape, usable by runtimes and adapters. */
 export interface FetchHandler<E = unknown> {
-  /** Handle a request; `toFetch` creates a context from these arguments and always returns a promise. */
-  fetch(request: Request, env?: E, executionCtx?: ExecutionContext): Promise<Response>
+  /**
+   * Handle a request; `toFetch` creates a context from these arguments and always returns a promise.
+   * A handler that needs an environment requires one, so a direct call cannot omit it by accident.
+   */
+  fetch(request: Request, ...args: FetchArgs<E>): Promise<Response>
 }

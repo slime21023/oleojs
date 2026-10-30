@@ -54,17 +54,19 @@ The package exposes four entry points: `oleo.js`, `oleo.js/filters`, `oleo.js/co
 | --- | --- | --- |
 | Routing | `router`, `get`, `post`, `put`, `patch`, `del`, `head`, `options`, `route` | Define method-and-path routes with inferred parameters. Use `route` for custom HTTP methods. |
 | Route groups | `group`, `RouteGroup`, `GroupOptions` | Share path prefixes and middleware across nested routes. |
+| Environment-bound helpers | `routesFor`, `RouteHelpers` | Bind route and group helpers to one environment for routes declared outside their router. |
 | Middleware composition | `withFilters`, `compose`, `HttpFilter`, `HttpHandler` | Apply filters in one call or build a reusable stack, combining their environment requirements. |
 | Typed context | `contextKey`, `ContextKey`, `Context` | Pass typed values, environment data, and route parameters through request handling. |
-| Fetch entry point | `toFetch`, `FetchHandler`, `ExecutionContext` | Create a per-request context and expose a callable `fetch` entry point. |
+| Fetch entry point | `toFetch`, `FetchHandler`, `FetchArgs`, `ExecutionContext` | Create a per-request context and expose a callable `fetch` entry point that requires the environment its handler needs. |
 | Route types | `Route`, `Params`, `ParamsOf` | Describe route values and type handlers declared separately from their routes. |
 | CORS | `cors`, `CorsOptions` from `oleo.js/filters` | Apply an explicit origin policy, handle preflights, and add response headers. |
 | Bearer authentication | `bearerAuth`, `BearerAuthOptions` from `oleo.js/filters` | Verify tokens through application code and optionally store a typed principal. |
 | Problem details | `problemDetails`, `Problem`, `ProblemDetailsOptions` from `oleo.js/filters` | Convert thrown errors and empty error responses into problem documents. |
 | Request logging | `requestLogger`, `LogEntry`, `RequestLoggerOptions` from `oleo.js/filters` | Record the request outcome and duration, with optional application fields. |
+| Body size limit | `bodyLimit`, `BodyLimitOptions` from `oleo.js/filters` | Reject request bodies over a byte limit with `413` before handlers read them. |
 | Request/response transformations | `mapRequest`, `mapResponse`, `responseHeaders` from `oleo.js/filters` | Transform messages with synchronous or asynchronous callbacks, or set response headers. |
-| Contracts | `contract`, `toOpenApi` from `oleo.js/contract` | Validate inputs with application-owned schemas, infer their outputs, and generate OpenAPI 3.1.1 from the same routes. |
-| Node.js adapter | `toNodeListener` from `oleo.js/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. |
+| Contracts | `contract`, `contractFor`, `toOpenApi` from `oleo.js/contract` | Validate inputs with application-owned schemas, infer their outputs, and generate OpenAPI 3.1.1 from the same routes. |
+| Node.js adapter | `toNodeListener`, `NodeListenerOptions` from `oleo.js/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. |
 
 Routing, composition, context, and Fetch APIs are exported from `oleo.js`. Filters, contracts, and the Node.js adapter have their own entry points.
 
@@ -77,8 +79,32 @@ Patterns support static segments, named parameters such as `/users/:id`, and a t
 - An unmatched path returns `404`. A matching path with an unsupported method returns `405` with an `Allow` header.
 - `HEAD` can fall back to `GET`, and its response has no body. `OPTIONS` routes are explicit.
 - Invalid patterns, conflicting route definitions, and invalid methods are rejected when `router()` is called.
+- Parameter names belong to each route. Diverging routes such as `/users/:id` and `/users/:userId/posts` may name the same position differently. Routes for the same path, such as `GET /users/:id` and `POST /users/:userId`, must use the same names.
 
-Groups combine prefixes with their nested routes. A route with an empty pattern, such as `get('', handler)`, addresses the group prefix itself. Group middleware is supplied through `group(prefix, { filters: [...] }, ...routes)` and runs only for matched routes, with their parameters available. Unmatched requests skip group middleware.
+Groups combine prefixes with their nested routes. A route with an empty pattern, such as `get('', handler)`, addresses the group prefix itself. Group middleware is supplied through `group(prefix, { filters: [...] }, ...routes)` and runs only for matched routes, with their parameters available. Unmatched requests skip group middleware. Placing a route or group in a group whose prefixes do not supply the parameters it needs is a type error that names the missing parameter.
+
+#### Routes declared in other modules
+
+Inside `router<Env>(...)`, route handlers infer `ctx.env` and the parameters of every enclosing group. Routes declared on their own have no such context. `routesFor<Env>()` binds the helpers to an environment instead, so those handlers need no annotations:
+
+```ts
+import { routesFor } from 'oleo.js'
+import type { ParamsOf } from 'oleo.js'
+import type { Env } from './env.ts'
+
+const { get, group } = routesFor<Env>()
+
+// A group declared on its own types its inline routes with the prefix parameters.
+export const users = group('/users/:userId',
+  get('/profile', (_request, ctx) => Response.json(ctx.env.profiles.find(ctx.params.userId))),
+)
+
+// A route for a parameterized group elsewhere names the parameters that group will supply.
+const { get: getForUser } = routesFor<Env, ParamsOf<'/users/:userId'>>()
+export const settings = getForUser('/settings', (_request, ctx) => new Response(ctx.params.userId))
+```
+
+`routesFor` returns the existing helpers and binds only their types. Its `group` fixes the enclosing parameters to the second type argument. For a group nested inline inside a parameterized group, use the core `group`, which infers them. `contractFor<Env>()` from `oleo.js/contract` does the same for contracts.
 
 ### Middleware and context keys
 
@@ -110,7 +136,7 @@ Environment requirements combine automatically. If `needsDb` is an `HttpFilter<D
 
 ### Standard filters
 
-All four standard filters are available from `oleo.js/filters`. They compose with custom filters and preserve handler environment and route-parameter types.
+The standard filters are available from `oleo.js/filters`. They compose with custom filters and preserve handler environment and route-parameter types.
 
 ```ts
 import { contextKey, get, group, router, toFetch, withFilters } from 'oleo.js'
@@ -144,6 +170,7 @@ Supply the application's `verifyToken` through `env`, as described under runtime
 - **CORS:** explicitly choose `'*'`, one serialized origin, an origin list, or a synchronous predicate. Configure methods, allowed/exposed headers, credentials, and preflight cache duration as needed. Credentials require an explicit origin policy rather than `'*'`. Allowed preflights return `204`; normal responses keep their body while receiving copied headers and merged `Vary` values. The policy follows the [Fetch CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol).
 - **Bearer authentication:** `verify` may be synchronous or asynchronous. Only `undefined` rejects a token; other values are valid principals. An optional context key stores that principal with its type checked against the verifier. Missing or rejected credentials return `401`; malformed Bearer credentials return `400`, with [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.html) challenges. Verification errors propagate to the error filter.
 - **Request logging:** the default writes one JSON entry with the method, raw path, status, and duration in milliseconds. Query strings are excluded, and timing ends when the handler returns a response. Customize `log(entry)` and synchronous `fields(request, response)` callbacks; additional fields cannot override core fields. Thrown errors are logged and rethrown. Logging failures are reported without changing the request outcome.
+- **Body size limit:** `bodyLimit({ maxBytes })` counts the bytes actually received, without trusting `Content-Length`. A body over the limit is canceled and answered with an empty `413`, which `problemDetails` renders. Accepted bodies are buffered and passed on in a new `Request`, which keeps the filter portable without streaming request bodies. Install it inside `problemDetails`, around the router or around groups that read whole bodies, and keep streaming-upload routes outside it.
 
 Each factory validates its options when called. Filters keep the package free of runtime dependencies.
 
@@ -200,9 +227,9 @@ Generated HEAD responses remain bodyless. When an empty response is converted, i
 
 ### Environments and runtime integration
 
-Use `router<Env>(...)` to make application environment data available as `ctx.env` with the expected type. For a direct call, supply that data as the second argument to `app.fetch(request, env)`. A hosting runtime may supply its own second argument, so its meaning depends on the integration.
+Use `router<Env>(...)` to make application environment data available as `ctx.env` with the expected type. For a direct call, supply that data as the second argument to `app.fetch(request, env)`. When the handler needs an environment, `env` is a required argument, so omitting it is a type error rather than a runtime crash. A handler whose environment may be `undefined` keeps it optional. A hosting runtime may supply its own second argument, so its meaning depends on the integration.
 
-`toFetch` returns an object whose `fetch` function can be called independently of the object. Export it for Cloudflare Workers or Bun, or pass `app.fetch` to `Deno.serve`. The `{ fetch }` shape and `ExecutionContext` are oleo.js conventions inspired by Workers, rather than WinterTC APIs.
+`toFetch` returns an object whose `fetch` function can be called independently of the object. Export it for Cloudflare Workers, which supplies `Env`. For an application without an environment, export it for Bun or pass `app.fetch` to `Deno.serve`. Those runtimes pass their own server objects as the second argument, so wrap an application that needs an environment: `Deno.serve((request) => app.fetch(request, env))`. The `{ fetch }` shape and `ExecutionContext` are oleo.js conventions inspired by Workers, rather than WinterTC APIs.
 
 On Node.js, connect the same application to a server:
 
@@ -214,7 +241,7 @@ import app from './app.ts'
 createServer(toNodeListener(app)).listen(3000)
 ```
 
-The adapter also accepts an `env` option for application data. Server configuration and lifecycle remain under application control.
+The adapter also accepts an `env` option for application data, which is required when the application needs an environment: `toNodeListener(app, { env })`. An unread or canceled request body is discarded after the response, so keep-alive connections remain usable. Server configuration and lifecycle remain under application control.
 
 ### Contracts and OpenAPI
 
@@ -246,6 +273,8 @@ Here `limitSchema` turns an optional decimal string into a number, defaulting to
 
 - Field failures produce `422` Problem Details containing an `errors` list. Invalid or missing JSON bodies produce `400`; unsupported or missing JSON media types produce `415`. Unexpected validator failures propagate to outer filters.
 - `request.json` consumes the body once. Use `input.json` inside the handler. Raw `ctx.params` stay strings even when `input.params` contains converted values.
+- Contracts read the whole JSON body. Install `bodyLimit({ maxBytes })` around them to bound it; an oversized body then produces `413` before validation.
+- For contracts declared outside their router, `contractFor<Env>()` binds `contract` to the environment, as `routesFor` does for routes. The [complete example](docs/examples/contract.ts) uses both.
 - `toOpenApi` reads definitions without invoking filters, handlers, or validators. It exports input/output JSON Schema through the schema's Standard JSON Schema capability or an application-supplied `toJsonSchema` callback. Missing export support is an error.
 - OpenAPI includes applicable `400`/`415`/`422` response descriptions; explicit responses override those defaults. Ordinary routes can be mixed in and are omitted from the document.
 - Response schemas describe documentation only: native responses and streaming bodies are not validated or read. Security metadata describes authentication; install `bearerAuth` or another filter to enforce it.

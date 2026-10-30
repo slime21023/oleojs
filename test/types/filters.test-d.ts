@@ -1,6 +1,6 @@
 import { describe, expectTypeOf, it } from 'vitest'
-import { bearerAuth, cors, problemDetails, requestLogger } from '../../src/filters/index.ts'
-import type { BearerAuthOptions, CorsOptions, LogEntry, Problem, ProblemDetailsOptions, RequestLoggerOptions } from '../../src/filters/index.ts'
+import { bearerAuth, bodyLimit, cors, problemDetails, requestLogger } from '../../src/filters/index.ts'
+import type { BearerAuthOptions, BodyLimitOptions, CorsOptions, LogEntry, Problem, ProblemDetailsOptions, RequestLoggerOptions } from '../../src/filters/index.ts'
 import { compose, contextKey, get, group, router } from '../../src/index.ts'
 import type { Context, HttpFilter, HttpHandler, ParamsOf } from '../../src/types.ts'
 
@@ -186,5 +186,29 @@ describe('bearerAuth types', () => {
     bearerAuth({ verify: () => unknownPrincipal, key: userKey })
     // @ts-expect-error -- realm must be a string
     bearerAuth({ verify: () => true, realm: 42 })
+  })
+})
+
+describe('bodyLimit types', () => {
+  it('returns an environment-agnostic filter that preserves handler parameters', () => {
+    expectTypeOf(bodyLimit({ maxBytes: 1024 })).toEqualTypeOf<HttpFilter>()
+    const handler: HttpHandler<Env, ParamsOf<'/files/:id'>> = () => new Response()
+    expectTypeOf(bodyLimit({ maxBytes: 1024 })(handler)).toEqualTypeOf<typeof handler>()
+  })
+
+  it('preserves contextual environment and group parameters', () => {
+    router<Env>(group('/files/:id', { filters: [bodyLimit({ maxBytes: 1024 })] }, get('', (_req, ctx) => {
+      expectTypeOf(ctx.env).toEqualTypeOf<Env>()
+      expectTypeOf(ctx.params).toEqualTypeOf<{ readonly id: string }>()
+      return new Response()
+    })))
+  })
+
+  it('requires a numeric maxBytes', () => {
+    expectTypeOf<BodyLimitOptions>().toEqualTypeOf<{ readonly maxBytes: number }>()
+    // @ts-expect-error -- maxBytes is required
+    bodyLimit({})
+    // @ts-expect-error -- maxBytes is a number of bytes
+    bodyLimit({ maxBytes: '1mb' })
   })
 })

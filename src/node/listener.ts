@@ -4,18 +4,32 @@ import { Readable, pipeline } from 'node:stream'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { STUB_EXECUTION_CTX } from '../context-defaults.ts'
 import { FORBIDDEN_METHODS } from '../http-method.ts'
-import type { FetchHandler } from '../types.ts'
+import type { FetchArgs, FetchHandler } from '../types.ts'
 
-/** Application data and proxy handling for the Node.js adapter. */
-export interface NodeListenerOptions<E = unknown> {
-  /** Forwarded as the application's environment on every request. */
-  env?: E
+/**
+ * Application data and proxy handling for the Node.js adapter.
+ * `env` is required when the application's environment cannot be `undefined`.
+ */
+export type NodeListenerOptions<E = unknown> = {
   /**
    * Use the first X-Forwarded-Proto and X-Forwarded-Host values for path-only request targets.
    * Defaults to false. Enable only behind a proxy that always sets or strips these headers.
    */
-  trustProxy?: boolean
-}
+  readonly trustProxy?: boolean
+} & (undefined extends E
+  ? {
+    /** Forwarded as the application's environment on every request. */
+    readonly env?: E
+  }
+  : {
+    /** Forwarded as the application's environment on every request. */
+    readonly env: E
+  })
+
+/** Options after the application: required, with `env`, when the application needs an environment. */
+export type NodeListenerArgs<E> = undefined extends E
+  ? [options?: NodeListenerOptions<E>]
+  : [options: NodeListenerOptions<E>]
 
 /** Incoming request from Node's HTTP/1.1 or HTTP/2 compatibility API. */
 export type NodeRequest = IncomingMessage | Http2ServerRequest
@@ -39,7 +53,8 @@ const UNSAFE_HOST = /[/\\?#@\s]/
  * before headers are sent or destroying the response after they are sent.
  * Server startup and shutdown remain the caller's responsibility.
  */
-export function toNodeListener<E>(app: FetchHandler<E>, options: NodeListenerOptions<E> = {}): NodeListener {
+export function toNodeListener<E>(app: FetchHandler<E>, ...args: NodeListenerArgs<E>): NodeListener {
+  const options: { readonly env?: E; readonly trustProxy?: boolean } = args[0] ?? {}
   const { env, trustProxy = false } = options
   return (req, res) => {
     void handle(app, env, trustProxy, req, res)
@@ -57,6 +72,10 @@ async function handle<E>(
   res.once('close', () => {
     if (!res.writableEnded) controller.abort()
   })
+  // A finished response no longer needs the rest of an unread or partly read request body.
+  res.once('finish', () => {
+    if (!req.complete) discardBody(req)
+  })
 
   if (FORBIDDEN_METHODS.has((req.method ?? '').toUpperCase())) return respondEmpty(res, 501)
   let request: Request
@@ -67,7 +86,8 @@ async function handle<E>(
   }
 
   try {
-    const response = await app.fetch(request, env, STUB_EXECUTION_CTX)
+    // NodeListenerArgs requires env exactly when FetchArgs does; generic E hides that correspondence.
+    const response = await app.fetch(request, ...([env, STUB_EXECUTION_CTX] as FetchArgs<E>))
     await writeResponse(response, req, res, controller.signal)
   } catch (error) {
     console.error(error)
@@ -75,6 +95,41 @@ async function handle<E>(
     if (!res.headersSent) respondEmpty(res, 500)
     else res.destroy(error instanceof Error ? error : undefined)
   }
+}
+
+const discardedBodies = new WeakSet<NodeRequest>()
+
+/**
+ * Read and drop the rest of a request body, as Node does for bodies nobody reads, so the message
+ * completes and an HTTP/1.1 connection stays reusable. Node only does this itself for requests
+ * that were never consumed, and the Web body stream always consumes them.
+ */
+function discardBody(req: NodeRequest): void {
+  if (discardedBodies.has(req)) return
+  discardedBodies.add(req)
+  req.removeAllListeners('data')
+  req.resume()
+}
+
+/**
+ * Expose the request body as a Web stream whose cancellation discards the remainder.
+ * Canceling `Readable.toWeb` directly would destroy the request mid-message, which loses a
+ * response sent after the cancel (such as a 413) or leaves a keep-alive connection stalled.
+ */
+function toBodyStream(req: NodeRequest): ReadableStream<Uint8Array> {
+  const reader = (Readable.toWeb(req as Readable) as unknown as ReadableStream<Uint8Array>).getReader()
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read()
+      // Once discarded, the source ends early; closing normally would present a truncated body.
+      if (discardedBodies.has(req)) controller.error(new Error('Request body discarded after the response'))
+      else if (done) controller.close()
+      else controller.enqueue(value)
+    },
+    cancel() {
+      discardBody(req)
+    },
+  }, { highWaterMark: 0 })
 }
 
 function firstValue(header: string | string[] | undefined): string | undefined {
@@ -114,7 +169,7 @@ function toRequest(req: NodeRequest, trustProxy: boolean, signal: AbortSignal): 
   }
 
   const method = req.method ?? 'GET'
-  const body = method === 'GET' || method === 'HEAD' ? null : (Readable.toWeb(req as Readable) as unknown as ReadableStream)
+  const body = method === 'GET' || method === 'HEAD' ? null : toBodyStream(req)
   // `duplex` is required by Node for streaming request bodies but missing from the DOM types.
   const init: RequestInit & { duplex: 'half' } = { method, headers, body, signal, duplex: 'half' }
   return new Request(url, init)

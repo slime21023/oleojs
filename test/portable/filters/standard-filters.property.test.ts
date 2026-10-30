@@ -1,6 +1,6 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { bearerAuth, cors, requestLogger } from '../../../src/filters/index.ts'
+import { bearerAuth, bodyLimit, cors, requestLogger } from '../../../src/filters/index.ts'
 import type { LogEntry } from '../../../src/filters/index.ts'
 import { contextKey, toFetch } from '../../../src/index.ts'
 import { paramValueArbitrary, PROPERTY_OPTIONS } from '../arbitraries.ts'
@@ -94,6 +94,38 @@ describe('request logging properties', () => {
       expect(logs).toHaveLength(1)
       expect(logs[0]).toMatchObject({ method: 'GET', path: '/', error: true })
       expect(logs[0]).not.toHaveProperty('status')
+    }), PROPERTY_OPTIONS)
+  })
+})
+
+describe('body limit properties', () => {
+  it('forwards exactly the received bytes if and only if they fit the limit', async () => {
+    const chunks = fc.array(fc.uint8Array({ maxLength: 16 }), { maxLength: 8 })
+    await fc.assert(fc.asyncProperty(chunks, fc.integer({ min: 0, max: 96 }), async (parts, maxBytes) => {
+      const expected = new Uint8Array(parts.flatMap((part) => [...part]))
+      let pulled = 0
+      const stream = new ReadableStream({
+        pull(controller) {
+          if (pulled === parts.length) controller.close()
+          else controller.enqueue(parts[pulled++])
+        },
+      }, { highWaterMark: 0 })
+      // Streaming request bodies need runtime-specific duplex support; shadow the byte body instead.
+      const req = new Request('https://api.test/', { method: 'POST', body: 'placeholder' })
+      Object.defineProperty(req, 'body', { value: stream })
+      let received: Uint8Array | undefined
+      const app = toFetch(bodyLimit({ maxBytes })(async (forwarded) => {
+        received = new Uint8Array(await forwarded.arrayBuffer())
+        return new Response(null, { status: 204 })
+      }))
+      const response = await app.fetch(req)
+      if (expected.byteLength <= maxBytes) {
+        expect(response.status).toBe(204)
+        expect(received).toEqual(expected)
+      } else {
+        expect(response.status).toBe(413)
+        expect(received).toBeUndefined()
+      }
     }), PROPERTY_OPTIONS)
   })
 })

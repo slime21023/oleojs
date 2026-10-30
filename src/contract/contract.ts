@@ -40,3 +40,20 @@ export function contract<
   })
   return result
 }
+
+/** `contract()` with environment `E` fixed and enclosing parameters defaulting to `TBase`. */
+export type BoundContract<E, TBase extends Params = {}> = <
+  const P extends string = string, const R extends ContractRequest = {}, TB extends Params = TBase,
+>(
+  definition: ContractDefinition<P, R>,
+  handler: ContractHandler<E, JoinParams<NoInfer<TB>, ParamsOf<P>>, NoInfer<R>>,
+) => Route<E, TB>
+
+/**
+ * Bind `contract()` to environment `E` for contracts declared apart from their router,
+ * so their handlers need no `Route<E>` annotation. `TBase` names the parameters supplied by the
+ * groups the contracts will be placed in. Only types are bound: this returns `contract` itself.
+ */
+export function contractFor<E = unknown, TBase extends Params = {}>(): BoundContract<E, TBase> {
+  return contract
+}

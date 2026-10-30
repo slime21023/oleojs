@@ -2,7 +2,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 import { contextKey, group, router, toFetch, withFilters } from '../../src/index.ts'
 import type { Context, HttpFilter, Route, RouteGroup } from '../../src/index.ts'
 import { bearerAuth } from '../../src/filters/index.ts'
-import { contract, toOpenApi } from '../../src/contract/index.ts'
+import { contract, contractFor, toOpenApi } from '../../src/contract/index.ts'
 import type { ContractInput, ContractRequest, OpenApiDocument, StandardSchemaV1 } from '../../src/contract/index.ts'
 import { createSchema, cursorSchema, definition, idSchema, info, limitSchema, schema } from '../portable/contract/fixtures.ts'
 
@@ -166,5 +166,36 @@ describe('Contract inference', () => {
   it('keeps native Responses independent of response documentation', () => {
     contract({ ...definition, responses: { 200: { description: 'Documented JSON', content: { 'application/json': { schema: createSchema } } } } },
       () => new Response('A native response remains valid', { status: 202 }))
+  })
+})
+
+describe('environment-bound contracts', () => {
+  it('types separately declared contracts without a Route annotation', () => {
+    const bound = contractFor<Env>()
+    const item = bound({ ...definition, method: 'POST', request: { json: createSchema } }, (_req, ctx, { json }) => {
+      expectTypeOf(ctx.env).toEqualTypeOf<Env>()
+      expectTypeOf(json).toEqualTypeOf<{ name: string }>()
+      return Response.json(json, { status: 201 })
+    })
+    expectTypeOf(item).toEqualTypeOf<Route<Env>>()
+    router<Env>(item)
+    // @ts-expect-error -- an Env contract cannot go into a router of another env
+    router<{ other: string }>(item)
+  })
+
+  it('binds enclosing parameters and still infers them inline', () => {
+    const teamContract = contractFor<Env, { readonly team: string }>()
+    const item = teamContract({ ...definition, path: '/items/:id', request: { params: { id: { schema: idSchema } } } }, (_req, ctx, input) => {
+      expectTypeOf(ctx.params).toEqualTypeOf<{ readonly team: string; readonly id: string }>()
+      expectTypeOf(input.params.id).toEqualTypeOf<number>()
+      return new Response()
+    })
+    router<Env>(group('/teams/:team', item))
+    // @ts-expect-error -- the prefix supplies org, not team
+    router<Env>(group('/orgs/:org', item))
+    router<Env>(group('/orgs/:org', contractFor<Env>()({ ...definition, path: '/x' }, (_req, ctx) => {
+      expectTypeOf(ctx.params).toEqualTypeOf<{ readonly org: string }>()
+      return new Response()
+    })))
   })
 })

@@ -51,6 +51,26 @@ describe('routing properties', () => {
     }), { ...PROPERTY_OPTIONS, examples: [['__proto__', 'alice'], ['id', '%2F']] })
   })
 
+  it('names a shared position by whichever diverging route is selected', async () => {
+    const names = fc.uniqueArray(paramNameArbitrary, { minLength: 3, maxLength: 3 })
+    const order = fc.shuffledSubarray([0, 1, 2], { minLength: 3, maxLength: 3 })
+    await fc.assert(fc.asyncProperty(names, order, paramValueArbitrary, paramValueArbitrary, async ([a, b, c], indices, first, second) => {
+      const echo: HttpHandler = (_req, ctx) => Response.json(ctx.params)
+      const routes = [
+        get(`/users/:${a}`, echo),
+        get(`/users/:${b}/posts/:${c}`, echo),
+        group(`/users/:${c}`, get('/files/*', echo)),
+      ]
+      const app = toFetch(router(...indices.map((index) => routes[index]!)))
+      const params = async (path: string) => (await app.fetch(new Request(`https://test${path}`))).json()
+      const one = encodeURIComponent(first)
+      const two = encodeURIComponent(second)
+      expect(await params(`/users/${one}`)).toEqual(Object.fromEntries([[a, first]]))
+      expect(await params(`/users/${one}/posts/${two}`)).toEqual(Object.fromEntries([[b, first], [c, second]]))
+      expect(await params(`/users/${one}/files/${two}`)).toEqual(Object.fromEntries([[c, first], ['*', second]]))
+    }), PROPERTY_OPTIONS)
+  })
+
   it('keeps priority and method-aware backtracking independent of registration order', async () => {
     const order = fc.shuffledSubarray([0, 1, 2], { minLength: 3, maxLength: 3 })
     await fc.assert(fc.asyncProperty(order, paramValueArbitrary, fc.boolean(), async (indices, value, staticGet) => {

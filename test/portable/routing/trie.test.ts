@@ -51,6 +51,23 @@ describe('matching', () => {
     expect(match(trie, 'GET', '/files').handler).toBeUndefined()
   })
 
+  it('names parameters by the selected route when diverging routes name a position differently', () => {
+    const trie = build([['GET', '/u/:id'], ['GET', '/u/:userId/posts/:postId'], ['POST', '/u/:owner/*']])
+    expect(match(trie, 'GET', '/u/7')).toEqual({ handler: 'GET /u/:id', params: { id: '7' } })
+    expect(match(trie, 'GET', '/u/7/posts/9')).toEqual({
+      handler: 'GET /u/:userId/posts/:postId',
+      params: { userId: '7', postId: '9' },
+    })
+    expect(match(trie, 'POST', '/u/7/a/b')).toEqual({ handler: 'POST /u/:owner/*', params: { owner: '7', '*': 'a/b' } })
+  })
+
+  it('uses the names of the route reached after backtracking', () => {
+    const trie = build([['GET', '/a/:x/b/c'], ['GET', '/a/:y/b/d'], ['GET', '/s/b/:x/c'], ['GET', '/s/:y/:z/d']])
+    expect(match(trie, 'GET', '/a/1/b/d')).toEqual({ handler: 'GET /a/:y/b/d', params: { y: '1' } })
+    expect(match(trie, 'GET', '/a/1/b/c')).toEqual({ handler: 'GET /a/:x/b/c', params: { x: '1' } })
+    expect(match(trie, 'GET', '/s/b/1/d')).toEqual({ handler: 'GET /s/:y/:z/d', params: { y: 'b', z: '1' } })
+  })
+
   it('prefers static over param over wildcard regardless of registration order', () => {
     const trie = build([['GET', '/a/*'], ['GET', '/a/:x'], ['GET', '/a/b']])
     expect(match(trie, 'GET', '/a/b').handler).toBe('GET /a/b')
@@ -135,7 +152,7 @@ describe('allowed methods', () => {
 describe('route definition errors', () => {
   it.each([
     ['users', 'must start with "/"'],
-    ['/u/:id/a', '":userId" conflicts', '/u/:userId/b'],
+    ['/u/:id/a', '":userId" conflicts', '/u/:userId/a'],
     ['/a/*/b', '"*" must be the last segment'],
     ['/a//b', 'empty segment'],
     ['/a:b', '":" and "*" must form a whole segment'],
@@ -158,6 +175,13 @@ describe('route definition errors', () => {
     }
     expect(() => trie.insert('GET', pattern, '')).toThrow(TypeError)
     expect(() => trie.insert('GET', pattern, '')).toThrow(message)
+  })
+
+  it('rejects different parameter names for the same path under any method', () => {
+    const trie = build([['GET', '/u/:id/files/*']])
+    expect(() => trie.insert('POST', '/u/:userId/files/*', '')).toThrow('":userId" conflicts with ":id" at the same position')
+    expect(() => trie.insert('GET', '/u/:userId/files/*', '')).toThrow('":userId" conflicts with ":id"')
+    expect(() => trie.insert('POST', '/u/:id/files/*', '')).not.toThrow()
   })
 
   it('rejects a duplicate method and pattern', () => {

@@ -10,12 +10,12 @@ Design influences: [http4k](https://www.http4k.org/) (server as a function, comp
 
 | Export | Tier | Contents | Status |
 | --- | --- | --- | --- |
-| `oleo.js` | Portable | Router, route helpers, groups, core types, `compose`, `withFilters`, context keys, `toFetch` | Phases 1–2 implemented |
+| `oleo.js` | Portable | Router, route helpers, groups, environment-bound helpers (`routesFor`), core types, `compose`, `withFilters`, context keys, `toFetch` | Phases 1–2 implemented |
 | `oleo.js/node` | Adapter | `node:http` / `node:http2` bridge | Implemented |
-| `oleo.js/filters` | Portable | CORS, Bearer authentication, RFC 9457 errors, request logging, and message transformations | Phase 3 implemented, with transformation helpers |
-| `oleo.js/contract` | Portable | Declarative contracts, Standard Schema input validation, OpenAPI 3.1.1 generation | Phase 4 implemented |
+| `oleo.js/filters` | Portable | CORS, Bearer authentication, RFC 9457 errors, request logging, body size limits, and message transformations | Phase 3 implemented, with `bodyLimit` and transformation helpers |
+| `oleo.js/contract` | Portable | Declarative contracts, environment-bound contracts (`contractFor`), Standard Schema input validation, OpenAPI 3.1.1 generation | Phase 4 implemented |
 
-Phases 1–4 are implemented, including all four [standard filters](#standard-filters-phase-3) and the optional [Contract module](#contracts).
+Phases 1–4 are implemented, including the four original [standard filters](#standard-filters-phase-3), [`bodyLimit`](#bodylimitoptions), and the optional [Contract module](#contracts).
 
 Read the [hard rules](#hard-rules) and [development workflow](#development-environment) before changing code. Use the [repository layout](#repository-layout) to locate implementations and tests. The sections below describe the current public contracts.
 
@@ -83,7 +83,7 @@ src/
   http-problem.ts           # shared problem type and rendering, with bodyless HEAD handling
   <module>.ts               # core modules (kebab-case)
   routing/
-    route.ts                # immutable Route/RouteGroup values, helpers, group, internal kind checks
+    route.ts                # immutable Route/RouteGroup values, helpers, group, routesFor, internal kind checks
     router.ts               # filter composition, dispatch, default responses
     walk.ts                 # group expansion shared by routing and documentation
     pattern.ts              # definition-time path validation and segment encoding
@@ -94,16 +94,17 @@ src/
     bearer-auth.ts          # Bearer credentials, verification, and typed principals
     problem-details.ts      # problem documents, error mapping, and isolated reporting
     request-logger.ts       # request outcomes, timing, and isolated logging callbacks
+    body-limit.ts           # byte-counted request body limits and buffered forwarding
     map-request.ts          # synchronous/asynchronous request transformations
     map-response.ts         # synchronous/asynchronous response transformations
     response-headers.ts     # header snapshots and response reconstruction
   node/
     index.ts                # `oleo.js/node` entry
-    listener.ts             # toNodeListener: ingress, egress, errors, disconnects
+    listener.ts             # toNodeListener: ingress, egress, errors, disconnects, body discarding
   contract/
     index.ts                # `oleo.js/contract` public entry
     types.ts / standard-schema.ts # public contracts and structural schema interfaces
-    contract.ts             # Route creation, metadata, and full-path checks
+    contract.ts             # Route creation, metadata, full-path checks, and contractFor
     definition.ts           # declaration validation and snapshots
     validate.ts             # input extraction, schema validation, and problem responses
     openapi.ts              # document generation, security metadata, default errors
@@ -126,8 +127,9 @@ test/
       problem-details.test.ts # error mapping, response conversion, and reporting
       problem-details.property.test.ts # generated status/header/body and serialization properties
       request-logger.test.ts # outcome fields, timing, privacy, and callback isolation
-      standard-filters.test.ts # composition of all four filters around routed authentication
-      standard-filters.property.test.ts # generated CORS, Bearer, and logging properties
+      body-limit.test.ts    # limits, chunked streams, cancellation, problem and contract integration
+      standard-filters.test.ts # composition of the four original filters around routed authentication
+      standard-filters.property.test.ts # generated CORS, Bearer, logging, and body-limit properties
       transforms.test.ts    # callback ordering, context visibility, errors, and streams
       response-headers.test.ts # header preservation, cookies, streaming, and generated cases
   node/
@@ -202,6 +204,11 @@ Keep these mechanisms intact:
 | `NoInfer<T>` in the Bearer verifier return type | Lets the context key determine the principal type, preventing an unknown verifier result from widening it and bypassing validation |
 | Non-distributive `FilterEnvironment` inference | Infers the intersection from all contravariant filter requirements together; extracting a union first would lose requirements alongside `unknown` |
 | Contextual composition overloads | Preserve environment inference for inline filter factories; the heterogeneous overload handles filters with independent requirements |
+| Single `group()` signature with `GroupArgs` | One signature whose optional first element accepts options or an item reports a mismatched item as the missing parameter; overloads only reported the last overload's options parameter |
+| `[BASE]?: never` on `GroupOptions` | A `RouteGroup` also has `filters`; without the marker a group needing parameters would type-check as options while `group()` treats it as an item |
+| Non-distributive `FetchArgs` / `NodeListenerArgs` | `env` may be omitted only when `undefined` is a valid environment, so `unknown` and `Env \| undefined` keep it optional while `Env` requires it |
+| Defaulted `TB` in `routesFor` and `contractFor` helpers | Inline routes still infer enclosing parameters from context; separately declared ones fall back to the bound `TBase` |
+| Fixed base in the bound `group` | An inferred base has no source outside a group, which also loses the prefix parameters of inline routes; fixing it to `TBase` keeps standalone groups typed |
 
 Phantom members are type-level only and are never set at runtime. The optional filter phantom keeps ordinary arrow functions assignable as filters. See [route groups](#route-groups-phase-2) for usage patterns.
 
@@ -310,6 +317,7 @@ export default toFetch(app)
 | `route(method, pattern, handler)` | `Route` | Any other method (`PROPFIND`, …) |
 | `router(...items)` | `HttpHandler` | Takes routes and groups. Builds the trie once. Throws on [route definition errors](#route-definition-errors) |
 | `group(prefix, options?, ...items)` | `RouteGroup` | See [Route groups](#route-groups-phase-2) |
+| `routesFor<E, TBase>()` | `RouteHelpers` | The helpers above bound to environment `E`, for routes declared outside their router. Same functions at runtime; see [Environment-bound helpers](#environment-bound-helpers) |
 | `compose(...filters)` | `HttpFilter` | `compose(a, b)(h)` is `a(b(h))`: the first filter is outermost. `compose()` is the identity |
 | `withFilters(handler, ...filters)` | `HttpHandler` | Applies the same outermost-first order in one call, retaining route parameters and combining environment requirements |
 | `toFetch(handler)` | `FetchHandler` | The only entry point. Creates the `Context` |
@@ -317,6 +325,14 @@ export default toFetch(app)
 - **Routes are values.** A `Route` is immutable, and `router()` reads it once. A router is itself an `HttpHandler`, so routers and filters nest freely.
 - **Type inference.** Route patterns are parsed with template literal types: `'/users/:id/*'` yields `ctx.params: { id: string; '*': string }`. `router<E>(...)` fixes `E` for its routes, and route helpers infer `E` and `P` contextually.
 - **Clients are handlers too.** Any `(req) => Promise<Response>` is assignable to `HttpHandler`. Do not pass `globalThis.fetch` itself as a handler: its second parameter is `RequestInit`, not `Context`. Wrap it as `(req) => fetch(req)`.
+
+### Environment-bound helpers
+
+A route declared on its own, such as in another module, has no surrounding `router<E>()` to infer `E` from. `routesFor<E, TBase = {}>()` returns `RouteHelpers<E, TBase>`: `route`, the method helpers, and `group`, with `E` fixed.
+
+- **Method helpers** default their enclosing parameters to `TBase` and still infer them inline, so `routesFor<Env, ParamsOf<'/users/:userId'>>().get('/settings', …)` sees `userId` and fits only under groups that supply it.
+- **`group`** fixes its enclosing parameters to `TBase`. A group declared on its own therefore types its inline routes with its prefix parameters, which an unannotated core `group()` cannot. For a group nested inline inside a parameterized group, use the core `group()`, which infers the enclosing parameters.
+- **No runtime cost.** The result is one frozen object holding the module's own helper functions, shared by every call. `contractFor<E, TBase>()` in `oleo.js/contract` binds `contract` the same way.
 
 ### Composing filters
 
@@ -328,11 +344,12 @@ export default toFetch(app)
 
 ### Entry point
 
-`toFetch(handler).fetch(request, env?, executionCtx?)` follows the Workers signature, and the returned object is directly usable as `export default`.
+`toFetch(handler).fetch(request, ...args: FetchArgs<E>)` follows the Workers signature `(request, env, executionCtx?)`, and the returned object is directly usable as `export default`.
 
 - **`fetch` must not depend on `this`.** Runtimes may call it detached (for example `Deno.serve(app.fetch)`), so it is a closure, not a method that reads `this`.
 
 - **`env`:** whatever the runtime passes second becomes `ctx.env` (Workers `Env`, Bun `Server`, Deno `ServeHandlerInfo`).
+- **Required when needed:** `FetchArgs<E>` makes `env` optional only when `undefined` is assignable to `E` (including `unknown`). For `toFetch(router<Env>(…))`, `app.fetch(request)` is a type error. On Bun and Deno, which pass their own second argument, wrap an application that needs an environment: `Deno.serve((request) => app.fetch(request, env))`.
 - **`executionCtx`:** when the runtime passes none, the stub is used.
 - **Testing:** `toFetch(app).fetch(new Request('http://test/users/1'))` works with no network and no adapter. `env` is `undefined` and `executionCtx` is the stub.
 
@@ -430,7 +447,7 @@ The two intentional differences from `URLPattern`:
   - Fetch upper-cases `DELETE`, `GET`, `HEAD`, `OPTIONS`, `POST`, and `PUT`, so any other casing of these (`'get'`) never matches. Other methods are case-sensitive and accepted in any casing.
   - `CONNECT`, `TRACE`, and `TRACK` are forbidden by Fetch.
 - A pattern that does not start with `/`.
-- Two different `:name`s at the same position (`/u/:id` vs `/u/:userId/posts`).
+- Two different `:name`s at the same position of the same path, under any methods (`GET /u/:id` vs `POST /u/:userId`). Parameter names belong to routes, so diverging paths may name a shared position differently (`/u/:id` and `/u/:userId/posts`).
 - The same method and pattern registered twice, including equivalent encodings (`/café` and `/caf%C3%A9`).
 - A `:name` that is not a valid `URLPattern` name: a JavaScript identifier (`/:`, `/:id?`).
 - The same `:name` twice in one pattern (`/:id/x/:id`). `URLPattern` rejects duplicate group names too.
@@ -445,8 +462,8 @@ The two intentional differences from `URLPattern`:
 - **`src/path.ts`:** `pathStart(url)` and `pathEnd(url, start)` return the path bounds as indices, allocation-free.
 - **`src/http-method.ts`:** `checkMethod` validates methods when `router()` is called; the Node adapter shares its forbidden-method list.
 - **`src/routing/trie.ts`:** `Trie<T>` has three methods. A router owns one trie and only ever calls it synchronously.
-  - **`insert(method, pattern, value)`:** registers a route and validates its full pattern, conflicts, and duplicates. Method validation belongs to `checkMethod`.
-  - **`match(method, url, start, end)`:** returns the selected value, `MALFORMED` (respond 400), or `undefined`. On success, the parameters are in `trie.params`. Read them before the next `match`. This keeps a successful match within the allocation budget.
+  - **`insert(method, pattern, value)`:** registers a route and validates its full pattern, conflicts, and duplicates. Method validation belongs to `checkMethod`. Parameter nodes are positional and unnamed; each terminal node records its path's parameter names in order, shared by every method there.
+  - **`match(method, url, start, end)`:** returns the selected value, `MALFORMED` (respond 400), or `undefined`. On success, the parameters are in `trie.params`. Read them before the next `match`. This keeps a successful match within the allocation budget. Captures happen while unwinding from the selected terminal, so they take that terminal's names from the last one back, without allocating.
   - **`allow(url, start, end)`:** the sorted `Allow` list for a 405. It is empty when no route matches the path, which means 404. It runs only on the miss path, so it may allocate.
 
 ## Route groups (Phase 2)
@@ -457,7 +474,7 @@ A group joins a prefix onto its routes when `router()` is called and flattens th
 
 ### API
 
-`group(prefix, ...items)` and `group(prefix, options, ...items)` return a `RouteGroup`. Items are routes or nested groups. `GroupOptions<E>` has one optional field, `filters: readonly HttpFilter<E>[]`. Exact overloads and inference constraints live in [`src/routing/route.ts`](../src/routing/route.ts).
+`group(prefix, ...items)` and `group(prefix, options, ...items)` return a `RouteGroup`. Items are routes or nested groups. `GroupOptions<E>` has one optional field, `filters: readonly HttpFilter<E>[]`. Both call shapes share one signature, `group(prefix, ...rest: GroupArgs<E, TPrefix, TBase>)`, so an item whose required parameters the prefixes do not supply is reported as that missing parameter. The exact signature and inference constraints live in [`src/routing/route.ts`](../src/routing/route.ts).
 
 ```ts
 const app = router(
@@ -480,7 +497,7 @@ const app = router(
 - **`''` addresses the prefix itself.** Inside a group, `get('', h)` matches the prefix exactly, and `get('/', h)` matches it with a trailing slash. At top level `''` is invalid because it does not start with `/`.
 - **One trie for everything.** Duplicate detection, priority, and `405` `Allow` lists cover grouped and ungrouped routes together. For example, `get('/admin/:tenant/users')` beside the group above is a duplicate route.
 - **`group()` never throws.** It only builds a frozen value. All errors surface when `router()` is called (Hard rule 6).
-- **Runtime discrimination:** route helpers and `group()` tag their values internally. A second argument to `group()` that is not such a value is the options object.
+- **Runtime discrimination:** route helpers and `group()` tag their values internally. A second argument to `group()` that is not such a value is the options object; an explicit `undefined` means no options. The types agree: a `RouteGroup` in that position is checked as an item, not as options, even though it also has `filters`.
 
 ### Group filters
 
@@ -559,16 +576,16 @@ A context key's `with` allocates one derived context per call. That cost belongs
 ### API
 
 ```ts
-interface NodeListenerOptions<E = unknown> {
-  env?: E
-  trustProxy?: boolean // default false
-}
+type NodeListenerOptions<E = unknown> =
+  { readonly trustProxy?: boolean } // default false
+  & (undefined extends E ? { readonly env?: E } : { readonly env: E })
+type NodeListenerArgs<E> = undefined extends E ? [options?: NodeListenerOptions<E>] : [options: NodeListenerOptions<E>]
 
 type NodeRequest = IncomingMessage | Http2ServerRequest
 type NodeResponse = ServerResponse | Http2ServerResponse
 type NodeListener = (req: NodeRequest, res: NodeResponse) => void
 
-function toNodeListener<E>(app: FetchHandler<E>, options?: NodeListenerOptions<E>): NodeListener
+function toNodeListener<E>(app: FetchHandler<E>, ...args: NodeListenerArgs<E>): NodeListener
 ```
 
 The implementation is in `src/node/listener.ts`; `src/node/index.ts` re-exports `toNodeListener` and these types.
@@ -578,6 +595,7 @@ createServer(toNodeListener(toFetch(app), { env })).listen(3000)
 ```
 
 - **Any `{ fetch }` object.** The listener accepts any object with a `fetch` method, not only the output of `toFetch`. It calls `app.fetch(request, options.env, stub)`.
+- **`env` is required when the app needs one**, matching [`FetchArgs`](#entry-point): `toNodeListener(app)` is a type error for a `FetchHandler<Env>`.
 - **The user owns the server.** Creating it, listening, TLS, and shutdown are the user's concern. The listener works with `node:http`, `node:https`, and the `node:http2` compatibility API.
 
 ### Ingress: `IncomingMessage` / `Http2ServerRequest` → `Request`
@@ -592,7 +610,9 @@ createServer(toNodeListener(toFetch(app), { env })).listen(3000)
   - Absolute-form (`http://host/path`) is used as-is: RFC 9112 says it overrides `Host`.
   - Any other form (such as `OPTIONS *`) fails `Request` construction and gets `400`.
 - **Headers:** built from `rawHeaders` using `append`, so duplicates are preserved. HTTP/2 pseudo-headers are stripped.
-- **Body:** `null` for `GET` and `HEAD`. Otherwise `Readable.toWeb(req)` with `duplex: 'half'`.
+- **Body:** `null` for `GET` and `HEAD`. Otherwise a Web stream that reads `Readable.toWeb(req)`, with `duplex: 'half'`.
+  - **Cancellation discards, never destroys.** Canceling `Readable.toWeb` directly destroys the request mid-message. A response sent after the cancel (such as a `bodyLimit` 413) is then lost, or the keep-alive connection stalls. Canceling the adapter's stream instead reads and drops the remainder, as Node does for unread bodies.
+  - **After the response,** an incomplete body is discarded the same way, because the Web stream consumes the request and Node no longer discards it itself. This keeps HTTP/1.1 connections reusable. A handler still reading after its response has finished gets a stream error instead of a silently truncated body.
 - **Abort:** an `AbortController` aborts when the connection closes before the response finishes. Its `signal` is passed to the `Request`.
 - **Construction failures:** the adapter responds directly, without calling `app.fetch`.
   - **`501 Not Implemented`:** a method Fetch forbids (`CONNECT`, `TRACE`, `TRACK`). This is checked before construction, with the list shared through `src/http-method.ts`.
@@ -642,24 +662,25 @@ These are not part of the core. Compose them as filters or separate packages ins
 
 ## Standard filters (Phase 3)
 
-*Status: all four filters are implemented and exported from `oleo.js/filters`, with runtime, property-based, composition, and type tests.*
+*Status: all four filters, plus `bodyLimit`, are implemented and exported from `oleo.js/filters`, with runtime, property-based, composition, and type tests.*
 
 ### Common rules
 
 - **Location:** `src/filters/`, exported as `oleo.js/filters`. The `exports` map includes `./filters` → `dist/filters/index.js`. These are portable packages: ECMA-262 and ECMA-429 only, with the same lint and type isolation as the core.
-- **Factories:** every filter is a factory (`cors(options)`, `bearerAuth(options)`, `problemDetails(options?)`, `requestLogger(options?)`) that returns an `HttpFilter`.
+- **Factories:** every filter is a factory (`cors(options)`, `bearerAuth(options)`, `problemDetails(options?)`, `requestLogger(options?)`, `bodyLimit(options)`) that returns an `HttpFilter`.
 - **Fail fast:** a factory validates its options and throws a `TypeError` immediately, never at request time.
 - **Tree-shaking:** named exports from one entry, and the package declares `sideEffects: false`. Unused filters drop out of bundles.
 - **Never mutate a `Response`** (Hard rule 3). To add headers, build `new Response(res.body, { status, statusText, headers })` with a copied `Headers`. Responses from `fetch()` have immutable headers, so in-place mutation would also throw.
 - **Recommended order** around a router:
 
   ```ts
-  withFilters(router(/* … bearerAuth per group or route … */), requestLogger(), cors({ origin }), problemDetails())
+  withFilters(router(/* … bearerAuth per group or route … */), requestLogger(), cors({ origin }), problemDetails(), bodyLimit({ maxBytes }))
   ```
 
   - **`requestLogger` outermost** sees the final status.
   - **`cors` outside `problemDetails`** also adds its headers to problem responses.
   - **`problemDetails` inside both** converts errors before they are logged.
+  - **`bodyLimit` inside `problemDetails`** has its empty 413 rendered. CORS preflights have no body, so placing it after `cors` costs nothing. To keep streaming uploads, install it on groups instead.
 
 ### `cors(options)`
 
@@ -809,9 +830,22 @@ function requestLogger<E = unknown>(options?: RequestLoggerOptions): HttpFilter<
 - **Isolation:** an error thrown by `log` or `fields` is reported with `console.error` and never affects the response or original thrown value. If `fields` fails, the core entry is still logged. Returned logging promise rejections are also reported, without delaying the response or extending the request lifetime.
 - **Core fields win:** additional fields are copied without mutating the caller's record. They cannot override method, path, status, duration, or error, including the absence of status/error on the corresponding outcome. A functional root `toJSON` is removed so it cannot replace the serialized core entry.
 
+### `bodyLimit(options)`
+
+```ts
+interface BodyLimitOptions { readonly maxBytes: number } // a non-negative safe integer
+```
+
+- **No body:** the same `Request` passes through, with no allocation.
+- **Counting:** the body stream is read chunk by chunk, summing `byteLength`. `Content-Length` is never consulted: it is a forbidden request header, and enforcement must not depend on what a client declares. Every chunk must be a `Uint8Array`; anything else cancels the stream and throws a `TypeError`.
+- **Over the limit:** reading stops at the first chunk past `maxBytes`. The source is canceled, with the cancellation awaited so failures propagate, and the filter returns an empty `413` without invoking the handler. `problemDetails` renders it as "Content Too Large".
+- **Within the limit:** the chunks are copied into one `Uint8Array` and passed on as `new Request(req, { body })`, which keeps the method, URL, headers, and signal. A byte body needs no `duplex`. Streaming request bodies vary by runtime, so the portable packages do not create them ([Portable code must not](#portable-code-must-not)).
+- **Trade-off:** wrapped handlers receive a buffered body of at most `maxBytes`. Keep streaming-upload routes outside the filter, for example by installing it on JSON route groups.
+- **Errors:** stream read and cancellation failures propagate.
+
 ### Contract
 
-Runtime and property-based tests live in `test/portable/filters/` and run on Node, Bun, workerd, and Deno. Composition tests verify preflight bypass, authenticated routes, empty error conversion, CORS on errors, bodyless HEAD responses, and final-status logging. `test/types/filters.test-d.ts` covers factory options, environment/parameter preservation, and Bearer principal compatibility, including rejection of unknown or incompatible verifier results.
+Runtime and property-based tests live in `test/portable/filters/` and run on Node, Bun, workerd, and Deno. Composition tests verify preflight bypass, authenticated routes, empty error conversion, CORS on errors, bodyless HEAD responses, and final-status logging. Body-limit tests replace a byte-bodied request's `body` with a pull stream to observe chunking and cancellation without runtime-specific streaming requests; `test/node/listener.test.ts` checks that the 413 reaches a real HTTP/1.1 client and that the connection is reused. `test/types/filters.test-d.ts` covers factory options, environment/parameter preservation, and Bearer principal compatibility, including rejection of unknown or incompatible verifier results.
 
 ## Transformation filters
 
@@ -867,7 +901,7 @@ Tests are in `test/portable/filters/transforms.test.ts`, `test/portable/filters/
 
 ### Definitions and inference
 
-`contract(definition, handler)` returns a normal `Route<E, TBase>`. Its handler receives `(request, ctx, input)` and returns a native Response or a promise. `ContractInput<RequestDefinition>` infers schema outputs, including transformations and defaults. Env flows from `router<Env>()` or a `Route<Env>` / `RouteGroup<Env>` annotation; full raw path parameters accumulate through groups as before.
+`contract(definition, handler)` returns a normal `Route<E, TBase>`. Its handler receives `(request, ctx, input)` and returns a native Response or a promise. `ContractInput<RequestDefinition>` infers schema outputs, including transformations and defaults. Env flows from `router<Env>()`, a `Route<Env>` / `RouteGroup<Env>` annotation, or `contractFor<Env, TBase>()`, which returns `contract` typed with `E` fixed and the enclosing parameters defaulting to `TBase` (see [Environment-bound helpers](#environment-bound-helpers)). Full raw path parameters accumulate through groups as before.
 
 | Field | Contract |
 | --- | --- |
@@ -893,6 +927,7 @@ Configuration containers are copied when the Contract is defined, including nest
 - Path values come from the router's decoded parameters; declared names must occur in the full path. Undeclared path parameters remain accessible through `ctx.params`.
 - JSON parsing precedes schema validation. A null body returns 400. With a body present, an absent or unsupported media type returns 415; `application/json` is case-insensitive and accepts media type parameters. Empty or malformed JSON returns 400. JSON `null` is parsed successfully and passed to the schema.
 - The body is read once. `input.json` holds the validated result; handlers must not read the consumed Request body again. Routes without a JSON declaration leave bodies untouched.
+- The contract reads the whole body without a size limit of its own. Install [`bodyLimit`](#bodylimitoptions) around contract routes to bound it; an oversized body then returns 413 before parsing.
 - Schemas validate sequentially in params, query, headers, json order; fields follow declaration order. Synchronous and asynchronous results are accepted. Every reported issue is collected, but a validator may itself choose to report only one issue.
 - Missing required parameters, duplicate scalar queries, and schema failures produce 422. The handler is skipped on all expected input failures. Read failures, validator throws/rejections, malformed schema results, and malformed issues propagate to outer filters instead of becoming client errors.
 

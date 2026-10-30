@@ -5,13 +5,14 @@ import type { FetchHandler, HttpHandler } from './types.ts'
  * Expose a handler through a Fetch entry point, creating a fresh context for each request.
  * The returned `fetch` function works when called detached and converts thrown errors to rejections.
  *
- * The environment is passed through unchanged; callers must supply it when their handler needs it.
+ * The environment is passed through unchanged. Its type is required unless `undefined` is a valid
+ * environment, but a runtime may still pass its own second argument (Bun `Server`, Deno `ServeHandlerInfo`).
  * Without a host execution context, `waitUntil` reports rejections through `console.error`
  * but cannot extend the request lifetime.
  */
 export function toFetch<E>(handler: HttpHandler<E>): FetchHandler<E> {
   return {
-    fetch: async (request, env, executionCtx) =>
+    fetch: async (request, ...[env, executionCtx]) =>
       handler(request, {
         params: EMPTY_PARAMS,
         env: env as E,
