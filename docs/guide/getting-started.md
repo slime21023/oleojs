@@ -6,7 +6,11 @@
 npm install oleo.js
 ```
 
-oleo.js has no runtime dependencies. It requires TypeScript 7 or later for full type inference and runs on Cloudflare Workers, Deno, Bun, and Node.js 22 or later.
+oleo.js has no runtime dependencies. It runs on Cloudflare Workers, Deno, Bun, and Node.js 22 or later. Type inference is verified with TypeScript 7; older TypeScript versions are untested.
+
+::: warning Not yet published
+The package is not on npm yet (version `0.0.0`). Until the first release, build it from the repository with `bun run build` and depend on the local checkout.
+:::
 
 ## First application
 
