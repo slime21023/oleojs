@@ -1,8 +1,5 @@
-import { checkMethod } from '../http-method.ts'
-import { validateRoute } from '../routing/route.ts'
-import type { RouteItem } from '../routing/route.ts'
-import { Trie } from '../routing/trie.ts'
-import { walkRoutes } from '../routing/walk.ts'
+import { inspectRoutes } from '../index.ts'
+import type { RouteItem } from '../index.ts'
 import { getContractDefinition } from './contract.ts'
 import { requireRecord, requireText } from './definition.ts'
 import { copyJson, embedSchema, pointerToken } from './json-schema.ts'
@@ -151,19 +148,16 @@ export function toOpenApi<E = unknown>(options: OpenApiOptions, ...items: RouteI
   if (options.securitySchemes !== undefined) checkSecuritySchemes(options.securitySchemes)
   const paths: Record<string, Partial<Record<OpenApiMethod, OpenApiOperation>>> = {}
   const ids = new Set<string>()
-  const trie = new Trie<true>()
-  for (const { route, pattern } of walkRoutes<E>(items)) {
-    checkMethod(route.method, pattern)
-    const segments = trie.insert(route.method, pattern, true)
-    validateRoute(route, segments)
+  // inspectRoutes applies every router() definition check, so the document describes a valid router.
+  for (const { route, method: routeMethod, pattern, segments } of inspectRoutes<E>(...items)) {
     const definition = getContractDefinition(route)
     if (definition === undefined) continue
-    if (!METHODS.has(route.method)) throw new TypeError(`OpenAPI cannot represent method ${route.method}`)
+    if (!METHODS.has(routeMethod)) throw new TypeError(`OpenAPI cannot represent method ${routeMethod}`)
     if (segments.includes('*')) throw new TypeError(`OpenAPI cannot represent wildcard path ${pattern}`)
     if (ids.has(definition.operationId)) throw new TypeError(`Duplicate operationId: ${definition.operationId}`)
     ids.add(definition.operationId)
     const path = '/' + segments.map((segment) => segment.startsWith(':') ? `{${segment.slice(1)}}` : segment).join('/')
-    const method = route.method.toLowerCase() as OpenApiMethod
+    const method = routeMethod.toLowerCase() as OpenApiMethod
     const pathItem = paths[path] ??= {}
     pathItem[method] = operation(definition, segments, `#/paths/${pointerToken(path)}/${method}`, options)
   }

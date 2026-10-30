@@ -30,6 +30,8 @@ Contract reference: [Core API](#core-api) · [Routing](#routing) · [Route group
 5. **Routing hot path:** no `new URL()`, `split()`, regex, or substring allocation for static comparison. See [Performance budget](#performance-budget).
 6. **Route definition errors throw when `router()` is called**, never at request time.
 7. **Do not present oleo.js conventions as standards.** The `{ fetch }` entry shape and `ExecutionContext` are not WinterTC APIs.
+8. **Keep the public surface small.** An entry point exports a value or type only if applications or extension authors write it themselves; see [Package manifest](#package-manifest).
+9. **Extensions use only the public routing API.** `src/filters/` and `src/contract/` never import `src/routing/*` or `src/http-method.ts`; see [Extension API](#extension-api).
 
 ## Development environment
 
@@ -83,9 +85,10 @@ src/
   http-problem.ts           # shared problem type and rendering, with bodyless HEAD handling
   <module>.ts               # core modules (kebab-case)
   routing/
-    route.ts                # immutable Route/RouteGroup values, helpers, group, routesFor, internal kind checks
+    route.ts                # immutable Route/RouteGroup values, helpers, group, routesFor, withRouteCheck, internal kind checks
+    inspect.ts              # inspectRoutes: the definition checks shared by router() and extensions
     router.ts               # filter composition, dispatch, default responses
-    walk.ts                 # group expansion shared by routing and documentation
+    walk.ts                 # group expansion behind inspectRoutes
     pattern.ts              # definition-time path validation and segment encoding
     trie.ts                 # segment trie: definition checks, matching, Allow lists
   filters/
@@ -104,7 +107,7 @@ src/
   contract/
     index.ts                # `oleo.js/contract` public entry
     types.ts / standard-schema.ts # public contracts and structural schema interfaces
-    contract.ts             # Route creation, metadata, full-path checks, and contractFor
+    contract.ts             # Route creation, metadata, full-path checks, and contractFor (public core API only)
     definition.ts           # declaration validation and snapshots
     validate.ts             # input extraction, schema validation, and problem responses
     openapi.ts              # document generation, security metadata, default errors
@@ -114,11 +117,13 @@ test/
     <module>.test.ts        # portable runtime tests, including generated properties
     arbitraries.ts          # shared input generators and deterministic run settings
     runtime-baseline.test.ts # checks the runtime assumptions the core relies on
+    api-surface.test.ts     # exact value exports of each portable entry point
     contract/              # input, document, endpoint integration, and property tests
     routing/
       router.test.ts        # route helpers, dispatch, HTTP semantics
       router.property.test.ts # routing and grouped-filter properties through the public API
       group.test.ts         # route group flattening, filters, definition errors
+      inspect.test.ts       # inspectRoutes entries and errors, withRouteCheck composition
       trie.test.ts          # matching, parameter decoding, definition errors
       urlpattern.test.ts    # corpus and generated URLPattern differential tests
     filters/
@@ -178,7 +183,9 @@ Coding rules that follow from these options:
 ### Package manifest
 
 - `"type": "module"`, `"sideEffects": false`, `"files": ["dist"]`.
-- `exports` maps `.` → `dist/index.js`, `./filters` → `dist/filters/index.js`, and `./node` → `dist/node/index.js`, each with a `types` condition.
+- `exports` maps `.` → `dist/index.js`, `./filters` → `dist/filters/index.js`, `./contract` → `dist/contract/index.js`, and `./node` → `dist/node/index.js`, each with a `types` condition.
+- **Public surface policy.** Export a value or type from an entry point only if applications or extension authors write it themselves. A type that only appears inside another signature stays in its module and is still visible in declarations and editor hovers. For example, `FetchArgs`, `GroupArgs`, `BoundMethodHelper`, and `NodeListenerArgs` stay in their modules, while `RouteHelpers` and `BoundContract` are exported because users annotate them.
+  - **Guard:** `test/portable/api-surface.test.ts`, and the `oleo.js/node` case in `test/node/listener.test.ts`, assert each entry's exact value exports. Changing those lists is a deliberate API decision; review type exports alongside it.
 - `engines.node` covers the currently maintained Node.js LTS lines.
 - **Declaration files keep `.ts` specifiers.** `rewriteRelativeImportExtensions` rewrites them in emitted `.js` only, so the emitted `.d.ts` files still import `./routing/router.ts` and similar.
   - **Verified:** a consumer project on TypeScript 7 with `NodeNext` resolves them to the `.d.ts` files and keeps full inference. The built JavaScript also runs on Node, Bun, and Deno.
@@ -318,6 +325,8 @@ export default toFetch(app)
 | `router(...items)` | `HttpHandler` | Takes routes and groups. Builds the trie once. Throws on [route definition errors](#route-definition-errors) |
 | `group(prefix, options?, ...items)` | `RouteGroup` | See [Route groups](#route-groups-phase-2) |
 | `routesFor<E, TBase>()` | `RouteHelpers` | The helpers above bound to environment `E`, for routes declared outside their router. Same functions at runtime; see [Environment-bound helpers](#environment-bound-helpers) |
+| `inspectRoutes(...items)` | `readonly RouteEntry[]` | The routes `router()` would register, with the same checks and errors; see [Extension API](#extension-api) |
+| `withRouteCheck(route, check)` | `Route` | A copy of `route` whose `check` runs at definition time; see [Extension API](#extension-api) |
 | `compose(...filters)` | `HttpFilter` | `compose(a, b)(h)` is `a(b(h))`: the first filter is outermost. `compose()` is the identity |
 | `withFilters(handler, ...filters)` | `HttpHandler` | Applies the same outermost-first order in one call, retaining route parameters and combining environment requirements |
 | `toFetch(handler)` | `FetchHandler` | The only entry point. Creates the `Context` |
@@ -334,6 +343,28 @@ A route declared on its own, such as in another module, has no surrounding `rout
 - **`group`** fixes its enclosing parameters to `TBase`. A group declared on its own therefore types its inline routes with its prefix parameters, which an unannotated core `group()` cannot. For a group nested inline inside a parameterized group, use the core `group()`, which infers the enclosing parameters.
 - **No runtime cost.** The result is one frozen object holding the module's own helper functions, shared by every call. `contractFor<E, TBase>()` in `oleo.js/contract` binds `contract` the same way.
 
+### Extension API
+
+Extensions, including oleo.js's own `oleo.js/contract`, see routes only through two public functions. Anything the first-party modules do with routes, a third-party package can do too. Hard rule 9 and an oxlint override for `src/filters/**` and `src/contract/**` enforce this.
+
+```ts
+interface RouteEntry<E = unknown> {
+  readonly route: Route<E, any>              // the value passed in
+  readonly method: string
+  readonly pattern: string                   // full pattern with group prefixes
+  readonly segments: readonly string[]       // canonical: encoded static text, ':name', '*'
+  readonly filters: readonly HttpFilter<E>[] // group filters, outermost first
+}
+function inspectRoutes<E>(...items: RouteItem<E, {}>[]): readonly RouteEntry<E>[]
+function withRouteCheck<E, TBase extends Params>(route: Route<E, TBase>, check: (entry: RouteEntry<E>) => void): Route<E, TBase>
+```
+
+- **`inspectRoutes`** is the single definition-time pass. `router()` itself registers exactly what it returns. It applies method, pattern, conflict, and route checks, and throws the same errors in the same order. Handlers and filters are never invoked, and the result is frozen and in definition order. Use it for documentation, client generation, route listings, or lint-style checks.
+- **`withRouteCheck`** returns a new frozen route. Its checks run in both `router()` and `inspectRoutes`, after the route's earlier checks, and receive the full grouped entry. Throwing rejects the definition, which keeps errors at definition time (Hard rule 6). The original route is unchanged.
+- **Metadata:** keep it in your own `WeakMap`, keyed by the route value you return, and read it back from `entry.route`. `oleo.js/contract` works this way: `contract()` stores its definition by route, checks declared path parameters with `withRouteCheck`, and `toOpenApi` reads both through `inspectRoutes`.
+- **Types for wrappers:** `RouteItem` and `JoinParams` are public so that wrappers like `contractFor` can carry group parameters.
+- **Allowed shared modules:** the stateless helpers `src/http-problem.ts` and `src/path.ts`, plus type-only imports from `src/types.ts`. Third parties can reimplement these trivially; routing knowledge is what must stay public.
+
 ### Composing filters
 
 - Use `withFilters(handler, ...filters)` to apply filters directly, and `compose(...filters)` to create a reusable stack. Both keep the first filter outermost and apply each wrapping closure once, when the stack is attached to a handler.
@@ -349,7 +380,7 @@ A route declared on its own, such as in another module, has no surrounding `rout
 - **`fetch` must not depend on `this`.** Runtimes may call it detached (for example `Deno.serve(app.fetch)`), so it is a closure, not a method that reads `this`.
 
 - **`env`:** whatever the runtime passes second becomes `ctx.env` (Workers `Env`, Bun `Server`, Deno `ServeHandlerInfo`).
-- **Required when needed:** `FetchArgs<E>` makes `env` optional only when `undefined` is assignable to `E` (including `unknown`). For `toFetch(router<Env>(…))`, `app.fetch(request)` is a type error. On Bun and Deno, which pass their own second argument, wrap an application that needs an environment: `Deno.serve((request) => app.fetch(request, env))`.
+- **Required when needed:** `FetchArgs<E>` makes `env` optional only when `undefined` is assignable to `E` (including `unknown`). For `toFetch(router<Env>(…))`, `app.fetch(request)` is a type error. On Bun and Deno, which pass their own second argument, wrap an application that needs an environment: `Deno.serve((request) => app.fetch(request, env))`. The [runtime guide](runtimes.md) lists every runtime's entry point and `waitUntil` behavior.
 - **`executionCtx`:** when the runtime passes none, the stub is used.
 - **Testing:** `toFetch(app).fetch(new Request('http://test/users/1'))` works with no network and no adapter. `env` is `undefined` and `executionCtx` is the stub.
 
@@ -951,7 +982,7 @@ Contract-generated 400/415/422 responses do not require `problemDetails()`. Wrap
 
 ### OpenAPI generation
 
-`toOpenApi(options, ...routes)` synchronously generates OpenAPI **3.1.1** from Route/RouteGroup definitions. It validates the entire route tree, including ordinary routes, but only documents Contract routes. No filter is applied and no handler, validation callback, network request, or remote reference resolver runs during generation. Application schema exporters do run.
+`toOpenApi(options, ...routes)` synchronously generates OpenAPI **3.1.1** from Route/RouteGroup definitions. It reads the route tree through the public `inspectRoutes`, so it applies every `router()` check to ordinary routes as well, but it only documents Contract routes. A third-party generator can do the same (see [Extension API](#extension-api)). No filter is applied and no handler, validation callback, network request, or remote reference resolver runs during generation. Application schema exporters do run.
 
 Options include required `info: { title, version, description? }`, optional `securitySchemes`, and optional `toJsonSchema(schema, direction)`. The provided callback takes precedence over native export. Otherwise the schema must provide `~standard.jsonSchema.input/output`; oleo requests `target: 'draft-2020-12'`. Input declarations use the `input` direction; responses use `output`. Exporters must accurately describe wire inputs, rather than only the transformed TypeScript output. Unsupported conversion throws instead of silently emitting an unconstrained schema.
 

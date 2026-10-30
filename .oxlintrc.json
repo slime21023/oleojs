@@ -33,6 +33,26 @@
   },
   "overrides": [
     {
+      "files": ["src/contract/**", "src/filters/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["node:*", "bun", "bun:*", "cloudflare:*"],
+                "message": "Portable code may use only ECMA-262 and ECMA-429 APIs (docs/project-reference.md, Standards conformance)."
+              },
+              {
+                "group": ["../routing/*", "../http-method.ts"],
+                "message": "Extensions use routing only through the public API (inspectRoutes, withRouteCheck) so third parties can build the same (docs/project-reference.md, Extension API)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["src/node/**", "test/node/**", "*.config.ts"],
       "rules": {
         "no-restricted-imports": "off",

@@ -4,7 +4,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 import { compose } from '../../src/compose.ts'
 import { contextKey } from '../../src/context-key.ts'
 import { toFetch } from '../../src/fetch.ts'
-import { type Route, type RouteGroup, get, group, router, routesFor } from '../../src/index.ts'
+import { type Route, type RouteEntry, type RouteGroup, get, group, inspectRoutes, router, routesFor, withRouteCheck } from '../../src/index.ts'
 import type { ExecutionContext, FetchHandler, HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from '../../src/types.ts'
 
 interface Env {
@@ -328,5 +328,25 @@ describe('environment-bound helpers', () => {
 
   it('shares the existing helpers at runtime', () => {
     expectTypeOf(routesFor<Env>().get).toBeFunction()
+  })
+})
+
+describe('extension API', () => {
+  it('preserves a route type through withRouteCheck', () => {
+    const needsUser: Route<Env, { userId: string }> = get('/settings', ok)
+    const checked = withRouteCheck(needsUser, (entry) => {
+      expectTypeOf(entry).toEqualTypeOf<RouteEntry<Env>>()
+    })
+    expectTypeOf(checked).toEqualTypeOf<Route<Env, { userId: string }>>()
+    router<Env>(group('/users/:userId', checked))
+    // @ts-expect-error -- the check does not change which parameters the route requires
+    router<Env>(group('/teams/:teamId', checked))
+  })
+
+  it('accepts the same items as router()', () => {
+    const needsUser: Route<unknown, { userId: string }> = get('/settings', ok)
+    expectTypeOf(inspectRoutes(group('/users/:userId', needsUser))).toEqualTypeOf<readonly RouteEntry<unknown>[]>()
+    // @ts-expect-error -- top-level items cannot require prefix parameters
+    inspectRoutes(needsUser)
   })
 })

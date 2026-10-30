@@ -1,12 +1,10 @@
 import { compose } from '../compose.ts'
 import { EMPTY_PARAMS } from '../context-defaults.ts'
-import { checkMethod } from '../http-method.ts'
 import { pathEnd, pathStart } from '../path.ts'
 import type { HttpHandler } from '../types.ts'
-import { validateRoute } from './route.ts'
+import { inspectRoutes } from './inspect.ts'
 import type { RouteItem } from './route.ts'
 import { MALFORMED, Trie } from './trie.ts'
-import { walkRoutes } from './walk.ts'
 
 function withoutBody(res: Response): Response | Promise<Response> {
   if (res.body === null) return res
@@ -24,16 +22,15 @@ function withoutBody(res: Response): Response | Promise<Response> {
  * or 400 for malformed parameter encoding in the selected route. HEAD can fall back to GET
  * and always removes the response body. Handler and filter errors propagate to the caller.
  *
- * @throws {TypeError} If items, methods, or full patterns are invalid, or routes conflict.
+ * @throws {TypeError} If items, methods, or full patterns are invalid, routes conflict, or a route check fails.
  */
 export function router<E = unknown>(...items: RouteItem<E, {}>[]): HttpHandler<E> {
   const trie = new Trie<HttpHandler<E, any>>()
 
+  // inspectRoutes performs every definition check, so these inserts cannot fail.
   // Build group wrappers once per route so requests only run the already-composed handler.
-  for (const { route, pattern, filters } of walkRoutes<E>(items)) {
-    checkMethod(route.method, pattern)
-    const segments = trie.insert(route.method, pattern, compose(...filters)(route.handler))
-    validateRoute(route, segments)
+  for (const { route, method, pattern, filters } of inspectRoutes<E>(...items)) {
+    trie.insert(method, pattern, compose(...filters)(route.handler))
   }
 
   return (req, ctx) => {

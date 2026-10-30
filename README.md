@@ -57,8 +57,9 @@ The package exposes four entry points: `oleo.js`, `oleo.js/filters`, `oleo.js/co
 | Environment-bound helpers | `routesFor`, `RouteHelpers` | Bind route and group helpers to one environment for routes declared outside their router. |
 | Middleware composition | `withFilters`, `compose`, `HttpFilter`, `HttpHandler` | Apply filters in one call or build a reusable stack, combining their environment requirements. |
 | Typed context | `contextKey`, `ContextKey`, `Context` | Pass typed values, environment data, and route parameters through request handling. |
-| Fetch entry point | `toFetch`, `FetchHandler`, `FetchArgs`, `ExecutionContext` | Create a per-request context and expose a callable `fetch` entry point that requires the environment its handler needs. |
-| Route types | `Route`, `Params`, `ParamsOf` | Describe route values and type handlers declared separately from their routes. |
+| Fetch entry point | `toFetch`, `FetchHandler`, `ExecutionContext` | Create a per-request context and expose a callable `fetch` entry point that requires the environment its handler needs. |
+| Route types | `Route`, `RouteItem`, `Params`, `ParamsOf`, `JoinParams` | Describe route values and type handlers declared separately from their routes. |
+| Extension API | `inspectRoutes`, `withRouteCheck`, `RouteEntry` | List routes as `router()` registers them and attach definition-time checks, for documentation and tooling packages. |
 | CORS | `cors`, `CorsOptions` from `oleo.js/filters` | Apply an explicit origin policy, handle preflights, and add response headers. |
 | Bearer authentication | `bearerAuth`, `BearerAuthOptions` from `oleo.js/filters` | Verify tokens through application code and optionally store a typed principal. |
 | Problem details | `problemDetails`, `Problem`, `ProblemDetailsOptions` from `oleo.js/filters` | Convert thrown errors and empty error responses into problem documents. |
@@ -229,19 +230,16 @@ Generated HEAD responses remain bodyless. When an empty response is converted, i
 
 Use `router<Env>(...)` to make application environment data available as `ctx.env` with the expected type. For a direct call, supply that data as the second argument to `app.fetch(request, env)`. When the handler needs an environment, `env` is a required argument, so omitting it is a type error rather than a runtime crash. A handler whose environment may be `undefined` keeps it optional. A hosting runtime may supply its own second argument, so its meaning depends on the integration.
 
-`toFetch` returns an object whose `fetch` function can be called independently of the object. Export it for Cloudflare Workers, which supplies `Env`. For an application without an environment, export it for Bun or pass `app.fetch` to `Deno.serve`. Those runtimes pass their own server objects as the second argument, so wrap an application that needs an environment: `Deno.serve((request) => app.fetch(request, env))`. The `{ fetch }` shape and `ExecutionContext` are oleo.js conventions inspired by Workers, rather than WinterTC APIs.
+`toFetch` returns an object whose `fetch` function can be called independently of the object. The `{ fetch }` shape and `ExecutionContext` are oleo.js conventions inspired by Workers, rather than WinterTC APIs.
 
-On Node.js, connect the same application to a server:
+| Runtime | Application without env | Application with env |
+| --- | --- | --- |
+| Cloudflare Workers | `export default app` | `export default app` (Workers supplies `Env`) |
+| Deno | `Deno.serve(app.fetch)` | `Deno.serve((request) => app.fetch(request, env))` |
+| Bun | `export default app` | `Bun.serve({ fetch: (request) => app.fetch(request, env) })` |
+| Node.js | `createServer(toNodeListener(app))` | `createServer(toNodeListener(app, { env }))` |
 
-```ts
-import { createServer } from 'node:http'
-import { toNodeListener } from 'oleo.js/node'
-import app from './app.ts'
-
-createServer(toNodeListener(app)).listen(3000)
-```
-
-The adapter also accepts an `env` option for application data, which is required when the application needs an environment: `toNodeListener(app, { env })`. An unread or canceled request body is discarded after the response, so keep-alive connections remain usable. Server configuration and lifecycle remain under application control.
+Deno and Bun pass their own server objects as the second argument, so an application that needs an environment must be wrapped. See the [runtime guide](docs/runtimes.md) for `waitUntil` behavior, Node.js proxy and body handling, and background work on each runtime. Server configuration and lifecycle remain under application control.
 
 ### Contracts and OpenAPI
 

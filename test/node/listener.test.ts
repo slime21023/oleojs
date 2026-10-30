@@ -108,6 +108,10 @@ describe('ingress', () => {
     expect([accepted.status, accepted.body.length]).toEqual([200, 1024])
   })
 
+  it('exports only the reviewed values from oleo.js/node', async () => {
+    expect(Object.keys(await import('../../src/node/index.ts'))).toEqual(['toNodeListener'])
+  })
+
   it('requires options.env exactly when the application needs an environment', () => {
     const envApp: FetchHandler<{ DB: string }> = { fetch: async () => new Response() }
     const optionalApp: FetchHandler<{ DB: string } | undefined> = { fetch: async () => new Response() }

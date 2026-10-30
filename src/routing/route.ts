@@ -1,4 +1,5 @@
 import type { HttpFilter, HttpHandler, JoinParams, Params, ParamsOf } from '../types.ts'
+import type { RouteEntry } from './inspect.ts'
 
 // Makes missing group parameters a type error; this marker never exists at runtime.
 declare const BASE: unique symbol
@@ -6,15 +7,12 @@ declare const BASE: unique symbol
 // Distinguish route/group values from options without relying on their public fields.
 const KIND = Symbol('oleo.kind')
 
-// Optional definition checks let extensions inspect full paths without core imports of extensions.
-const validations = new WeakMap<object, (segments: readonly string[]) => void>()
+// Definition checks let extensions inspect full routes without the core importing extensions.
+const routeChecks = new WeakMap<object, readonly ((entry: RouteEntry<any>) => void)[]>()
 
-export function setRouteValidation(route: object, validate: (segments: readonly string[]) => void): void {
-  validations.set(route, validate)
-}
-
-export function validateRoute(route: object, segments: readonly string[]): void {
-  validations.get(route)?.(segments)
+/** Run the checks attached with {@link withRouteCheck}, in the order they were added. */
+export function runRouteChecks(entry: RouteEntry<any>): void {
+  for (const check of routeChecks.get(entry.route) ?? []) check(entry)
 }
 
 /**
@@ -72,6 +70,25 @@ export function route<E = unknown, TPattern extends string = string, TBase exten
   handler: HttpHandler<E, JoinParams<NoInfer<TBase>, ParamsOf<TPattern>>>,
 ): Route<E, TBase> {
   return Object.freeze({ [KIND]: 'route' as const, method, pattern, handler })
+}
+
+/**
+ * Return a copy of a route that also runs `check` when `router()` or `inspectRoutes()` registers it.
+ * The check receives the full grouped pattern and its canonical segments; throwing rejects the
+ * definition with that error. Earlier checks on `route` run first; `route` itself is unchanged.
+ * Extensions can key their own metadata by the returned value and find it again through
+ * `inspectRoutes()`.
+ * @throws {TypeError} If `route` is not a route or `check` is not a function.
+ */
+export function withRouteCheck<E, TBase extends Params>(
+  route: Route<E, TBase>,
+  check: (entry: RouteEntry<E>) => void,
+): Route<E, TBase> {
+  if (getRouteKind(route) !== 'route') throw new TypeError('withRouteCheck() expects a route')
+  if (typeof check !== 'function') throw new TypeError('withRouteCheck() expects check to be a function')
+  const checked = Object.freeze({ [KIND]: 'route' as const, method: route.method, pattern: route.pattern, handler: route.handler })
+  routeChecks.set(checked, Object.freeze([...(routeChecks.get(route) ?? []), check]))
+  return checked
 }
 
 function methodHelper(method: string) {
