@@ -32,9 +32,11 @@ export function bodyLimit<E = unknown>(options: BodyLimitOptions): HttpFilter<E>
     if (req.body === null) return next(req, ctx)
     const body = await readWithin(req.body, maxBytes)
     if (body === undefined) return new Response(null, { status: 413 })
+    // Built from req's members rather than `new Request(req, init)`, which accepts only native
+    // requests; adapters may pass a Request stand-in (see oleojs/node's `lazyRequest`).
     // The method is copied from req, and Fetch never gives a GET or HEAD request a body.
     // oxlint-disable-next-line unicorn/no-invalid-fetch-options
-    return next(new Request(req, { body }), ctx)
+    return next(new Request(req.url, { method: req.method, headers: req.headers, body, signal: req.signal }), ctx)
   }
 }
 
