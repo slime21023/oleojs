@@ -1,0 +1,20 @@
+{
+  "name": "oleojs-bench",
+  "private": true,
+  "type": "module",
+  "description": "HTTP throughput comparison of oleojs, Express, and plain node:http on Node.js",
+  "scripts": {
+    "bench": "node run.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "autocannon": "8.0.0",
+    "express": "5.3.0"
+  },
+  "devDependencies": {
+    "@types/autocannon": "7.12.7",
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2"
+  }
+}

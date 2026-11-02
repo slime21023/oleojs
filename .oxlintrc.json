@@ -53,7 +53,7 @@
       }
     },
     {
-      "files": ["src/node/**", "test/node/**", "*.config.ts"],
+      "files": ["src/node/**", "test/node/**", "bench/**", "*.config.ts"],
       "rules": {
         "no-restricted-imports": "off",
         "no-restricted-globals": "off"
