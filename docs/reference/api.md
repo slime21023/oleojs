@@ -20,7 +20,7 @@ The package exposes four entry points: `oleojs`, `oleojs/filters`, `oleojs/contr
 | Body size limit | `bodyLimit`, `BodyLimitOptions` from `oleojs/filters` | Reject request bodies over a byte limit with `413` before handlers read them. |
 | Request/response transformations | `mapRequest`, `mapResponse`, `responseHeaders` from `oleojs/filters` | Transform messages with synchronous or asynchronous callbacks, or set response headers. |
 | Contracts | `contract`, `contractFor`, `toOpenApi` from `oleojs/contract` | Validate inputs with application-owned schemas, infer their outputs, and generate OpenAPI 3.1.1 from the same routes. |
-| Node.js adapter | `toNodeListener`, `NodeListenerOptions` from `oleojs/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. |
+| Node.js adapter | `toNodeListener`, `NodeListenerOptions`, `FastResponse` from `oleojs/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. Requests are lightweight stand-ins by default, and `FastResponse` writes responses without a body stream; see [Performance](/runtimes/node#performance). |
 
 Routing, composition, context, and Fetch APIs are exported from `oleojs`. Filters, contracts, and the Node.js adapter have their own entry points.
 

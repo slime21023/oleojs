@@ -22,7 +22,7 @@ node run.ts --scenario plain-text --duration 5 --connections 50
 ## Method
 
 - Each framework runs in its own child process, started fresh for every scenario, with `NODE_ENV=production`. [autocannon](https://github.com/mcollina/autocannon) generates load from the runner process over HTTP/1.1 keep-alive on `127.0.0.1`.
-- oleojs is served through `oleojs/node` (`toNodeListener`), imported from `../src` so no build is needed. Node.js runs the TypeScript sources directly.
+- oleojs is served through `oleojs/node` (`toNodeListener`), imported from `../src` so no build is needed. Node.js runs the TypeScript sources directly. It runs three times: with `lazyRequest: false` (native requests), with defaults, and with defaults plus `FastResponse` for every response. See [Performance](https://slime21023.github.io/oleojs/runtimes/node#performance).
 - Express keeps its defaults, including `ETag` and `X-Powered-By`.
 - The `node:http` baseline dispatches only the benchmarked paths by hand. It shows the cost of Node's HTTP server alone, not a usable router.
 - Load generator and servers share one machine, so absolute numbers depend on it. Compare frameworks within one run, not across machines.

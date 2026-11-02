@@ -16,13 +16,15 @@ const app = withFilters(routes,
   mapRequest((request) => {
     const headers = new Headers(request.headers)
     if (!headers.has('Accept-Language')) headers.set('Accept-Language', 'en')
-    return new Request(request, { headers })
+    return new Request(request.url, { method: request.method, headers, signal: request.signal })
   }),
   responseHeaders({ 'Cache-Control': 'no-store', 'X-Service': 'oleo' }),
 )
 
 export default toFetch(app)
 ```
+
+The new request is built from the incoming request's members, which works on every runtime. `new Request(request, init)` would also copy the body, but it accepts only native requests, and the Node adapter passes a [lightweight request](/runtimes/node#performance) by default. To forward a body, read it first, for example with `await request.arrayBuffer()`, and pass it as `body`.
 
 `responseHeaders` accepts a native `Headers`, header record, or array of header pairs. It snapshots the configuration, replaces matching names, and preserves other headers, repeated `Set-Cookie` values, status, and the streaming body. Status-zero responses pass through unchanged. Transform callbacks own any body reading and should return new messages when making changes.
 

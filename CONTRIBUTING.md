@@ -21,7 +21,7 @@ The public behavior contracts live on the documentation site, whose source is `d
 
 1. **Zero runtime dependencies.** Dev dependencies are allowed.
 2. **Portable packages use only ECMA-262 and ECMA-429 APIs.** See [Standards conformance](#standards-conformance).
-3. **Never wrap, proxy, subclass, or mutate `Request` or `Response`.** Build responses with `new Response()` or `Response.json()`.
+3. **Never wrap, proxy, subclass, or mutate `Request` or `Response`.** Build responses with `new Response()` or `Response.json()`. The one exception is `oleojs/node`'s fast paths ([Performance](https://slime21023.github.io/oleojs/runtimes/node#performance)): the lightweight request it passes by default (`lazyRequest: false` turns it off) and the `FastResponse` that applications import explicitly. Both are stand-ins that inherit from the native prototype and build the native object on first use of any other member. They live only in the adapter, the core never creates them, and their limits are documented. Portable code, including filters, never depends on receiving native objects: build a new request from `url`, `method`, `headers`, and `signal` rather than with `new Request(request, init)`.
 4. **`Context` holds data only.** Never add helper methods (`ctx.json()`, `ctx.text()`, …) to it.
 5. **Routing hot path:** no `new URL()`, `split()`, regex, or substring allocation for static comparison. See [Performance budget](#performance-budget).
 6. **Route definition errors throw when `router()` is called**, never at request time.
@@ -102,6 +102,8 @@ src/
   node/
     index.ts                # `oleojs/node` entry
     listener.ts             # toNodeListener: ingress, egress, errors, disconnects, body discarding
+    request.ts              # lazyRequest stand-in, header conversion, URL and method normalization
+    response.ts             # FastResponse and the parts the listener writes without a body stream
   contract/
     index.ts                # `oleojs/contract` public entry
     types.ts / standard-schema.ts # public contracts and structural schema interfaces
@@ -136,7 +138,10 @@ test/
       transforms.test.ts    # callback ordering, context visibility, errors, and streams
       response-headers.test.ts # header preservation, cookies, streaming, and generated cases
   node/
+    helpers.ts              # shared server and client helpers
     listener.test.ts        # real HTTP/1.1 and HTTP/2 servers
+    lazy-request.test.ts    # stand-in behavior, normalization properties against Request, lazy ingress
+    fast-response.test.ts   # Response parity properties and one-write egress
   types/
     inference.test-d.ts     # public type inference contract
     filters.test-d.ts       # filter options and preservation of environment/parameter inference

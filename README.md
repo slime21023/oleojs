@@ -47,7 +47,7 @@ console.log(await response.json()) // { userId: '42', postId: '7' }
 | `oleojs` | Routing, groups, middleware composition, context keys, the Fetch entry point, and the extension API | [Guide](https://slime21023.github.io/oleojs/guide/introduction) |
 | `oleojs/filters` | CORS, Bearer authentication, RFC 9457 problem details, request logging, body size limits, and message transformations | [Filters](https://slime21023.github.io/oleojs/filters/) |
 | `oleojs/contract` | Validated inputs with Standard Schema and OpenAPI 3.1.1 generation | [Contracts](https://slime21023.github.io/oleojs/contracts/) |
-| `oleojs/node` | Node.js HTTP/1.1 and HTTP/2 adapter | [Node.js](https://slime21023.github.io/oleojs/runtimes/node) |
+| `oleojs/node` | Node.js HTTP/1.1 and HTTP/2 adapter, with lightweight requests and `FastResponse` | [Node.js](https://slime21023.github.io/oleojs/runtimes/node) |
 
 ## Runtimes
 

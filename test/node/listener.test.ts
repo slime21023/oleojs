@@ -1,68 +1,14 @@
-import { type IncomingHttpHeaders, type IncomingMessage, type OutgoingHttpHeaders, type ServerResponse, createServer, request as httpRequest } from 'node:http'
+import { type IncomingMessage, type ServerResponse, createServer, request as httpRequest } from 'node:http'
 import { connect as http2Connect, createServer as createHttp2Server } from 'node:http2'
-import type { AddressInfo, Server } from 'node:net'
-import { connect as netConnect } from 'node:net'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { STUB_EXECUTION_CTX } from '../../src/context-defaults.ts'
 import { toFetch } from '../../src/fetch.ts'
 import { bodyLimit } from '../../src/filters/index.ts'
 import type { ExecutionContext, FetchHandler } from '../../src/types.ts'
-import { type NodeListener, type NodeListenerArgs, toNodeListener } from '../../src/node/listener.ts'
+import { type NodeListener, toNodeListener } from '../../src/node/listener.ts'
+import { closeServers, echoUrl, fetchable, listen, send, sendRaw, serve } from './helpers.ts'
 
-const servers: Server[] = []
-afterEach(async () => {
-  await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))))
-})
-
-async function listen(server: Server): Promise<number> {
-  servers.push(server)
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  return (server.address() as AddressInfo).port
-}
-
-function serve<E>(app: FetchHandler<E>, ...options: NodeListenerArgs<E>): Promise<number> {
-  return listen(createServer(toNodeListener(app, ...options)))
-}
-
-const fetchable = (fetch: (request: Request) => Response | Promise<Response>): FetchHandler => ({
-  fetch: async (request) => fetch(request),
-})
-
-interface Reply {
-  status: number
-  statusMessage: string
-  headers: IncomingHttpHeaders
-  body: string
-}
-
-function send(port: number, method: string, path: string, headers: OutgoingHttpHeaders = {}, body?: string) {
-  return new Promise<Reply>((resolve, reject) => {
-    const req = httpRequest({ host: '127.0.0.1', port, method, path, headers }, (res) => {
-      let text = ''
-      res.setEncoding('utf8')
-      res.on('data', (chunk: string) => (text += chunk))
-      res.on('end', () =>
-        resolve({ status: res.statusCode!, statusMessage: res.statusMessage!, headers: res.headers, body: text }),
-      )
-    })
-    req.on('error', reject)
-    req.end(body)
-  })
-}
-
-// Sends raw bytes, for request targets and headers that normal clients refuse to produce.
-function sendRaw(port: number, text: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const socket = netConnect(port, '127.0.0.1', () => socket.end(text))
-    let reply = ''
-    socket.setEncoding('utf8')
-    socket.on('data', (chunk: string) => (reply += chunk))
-    socket.on('end', () => resolve(reply))
-    socket.on('error', reject)
-  })
-}
-
-const echoUrl = fetchable((request) => new Response(request.url))
+afterEach(closeServers)
 
 describe('ingress', () => {
   it('builds the URL from the scheme, Host, and request target', async () => {
@@ -109,7 +55,7 @@ describe('ingress', () => {
   })
 
   it('exports only the reviewed values from oleojs/node', async () => {
-    expect(Object.keys(await import('../../src/node/index.ts'))).toEqual(['toNodeListener'])
+    expect(Object.keys(await import('../../src/node/index.ts'))).toEqual(['toNodeListener', 'FastResponse'])
   })
 
   it('requires options.env exactly when the application needs an environment', () => {

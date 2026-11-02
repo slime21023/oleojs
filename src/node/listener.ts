@@ -4,6 +4,8 @@ import { Readable } from 'node:stream'
 import { STUB_EXECUTION_CTX } from '../context-defaults.ts'
 import { FORBIDDEN_METHODS } from '../http-method.ts'
 import type { FetchArgs, FetchHandler } from '../types.ts'
+import { lazyRequest, normalizeMethod, normalizeUrl, toHeaders } from './request.ts'
+import { type FastResponseParts, fastResponseParts } from './response.ts'
 
 /**
  * Application data and proxy handling for the Node.js adapter.
@@ -15,6 +17,14 @@ export type NodeListenerOptions<E = unknown> = {
    * Defaults to false. Enable only behind a proxy that always sets or strips these headers.
    */
   readonly trustProxy?: boolean
+  /**
+   * Pass the application a lightweight Request: `method`, `url`, `headers`, `signal`, and the
+   * `text()`, `json()`, `arrayBuffer()`, and `bytes()` body reads work without building the native
+   * Request, which any other member builds on first use. Defaults to true.
+   * It passes `instanceof Request`, but `new Request(request, init)`, `fetch(request)`, and
+   * native methods called with it as `this` throw a TypeError. Set false to pass native Requests.
+   */
+  readonly lazyRequest?: boolean
 } & (undefined extends E
   ? {
     /** Forwarded as the application's environment on every request. */
@@ -53,17 +63,24 @@ const UNSAFE_HOST = /[/\\?#@\s]/
  * Server startup and shutdown remain the caller's responsibility.
  */
 export function toNodeListener<E>(app: FetchHandler<E>, ...args: NodeListenerArgs<E>): NodeListener {
-  const options: { readonly env?: E; readonly trustProxy?: boolean } = args[0] ?? {}
-  const { env, trustProxy = false } = options
+  const options: { readonly env?: E; readonly trustProxy?: boolean; readonly lazyRequest?: boolean } = args[0] ?? {}
+  const { env, trustProxy = false, lazyRequest = true } = options
+  const ingress: Ingress = { trustProxy, lazyRequest }
   return (req, res) => {
-    void handle(app, env, trustProxy, req, res)
+    void handle(app, env, ingress, req, res)
   }
+}
+
+/** How Node requests become Web requests. */
+interface Ingress {
+  readonly trustProxy: boolean
+  readonly lazyRequest: boolean
 }
 
 async function handle<E>(
   app: FetchHandler<E>,
   env: E | undefined,
-  trustProxy: boolean,
+  ingress: Ingress,
   req: NodeRequest,
   res: NodeResponse,
 ): Promise<void> {
@@ -79,7 +96,7 @@ async function handle<E>(
   if (FORBIDDEN_METHODS.has((req.method ?? '').toUpperCase())) return respondEmpty(res, 501)
   let request: Request
   try {
-    request = toRequest(req, trustProxy, controller.signal)
+    request = toRequest(req, ingress, controller.signal)
   } catch {
     return respondEmpty(res, 400)
   }
@@ -131,12 +148,21 @@ function toBodyStream(req: NodeRequest): ReadableStream<Uint8Array> {
   }, { highWaterMark: 0 })
 }
 
+/** Read the whole request body without a Web stream, for the lazy request's body methods. */
+async function readBody(req: NodeRequest): Promise<Uint8Array> {
+  const chunks: Buffer[] = []
+  for await (const chunk of req as AsyncIterable<Buffer>) chunks.push(chunk)
+  // Once discarded, the source ends early; resolving would present a truncated body.
+  if (discardedBodies.has(req)) throw new Error('Request body discarded after the response')
+  return Buffer.concat(chunks)
+}
+
 function firstValue(header: string | string[] | undefined): string | undefined {
   const value = Array.isArray(header) ? header[0] : header
   return value?.split(',')[0]?.trim() || undefined
 }
 
-function toRequest(req: NodeRequest, trustProxy: boolean, signal: AbortSignal): Request {
+function toRequest(req: NodeRequest, ingress: Ingress, signal: AbortSignal): Request {
   const http2 = req instanceof Http2ServerRequest
   let scheme = 'http'
   if (http2) {
@@ -145,7 +171,7 @@ function toRequest(req: NodeRequest, trustProxy: boolean, signal: AbortSignal): 
     scheme = 'https'
   }
   let host = http2 ? req.authority : req.headers.host
-  if (trustProxy) {
+  if (ingress.trustProxy) {
     const proto = firstValue(req.headers['x-forwarded-proto'])?.toLowerCase()
     if (proto === 'http' || proto === 'https') scheme = proto
     host = firstValue(req.headers['x-forwarded-host']) ?? host
@@ -153,24 +179,28 @@ function toRequest(req: NodeRequest, trustProxy: boolean, signal: AbortSignal): 
 
   // Request needs an absolute URL; other target forms are left to its constructor to validate.
   const target = req.url ?? ''
-  let url = target
-  if (target.startsWith('/')) {
-    if (host === undefined || host === '' || UNSAFE_HOST.test(host)) throw new TypeError(`Invalid host: ${host}`)
-    url = `${scheme}://${host}${target}`
+  const originForm = target.startsWith('/')
+  if (originForm && (host === undefined || host === '' || UNSAFE_HOST.test(host))) {
+    throw new TypeError(`Invalid host: ${host}`)
   }
-
-  const headers = new Headers()
-  const raw = req.rawHeaders
-  for (let i = 0; i < raw.length; i += 2) {
-    const name = raw[i]!
-    // HTTP/2 pseudo-headers belong to request metadata, not Web Headers.
-    if (!name.startsWith(':')) headers.append(name, raw[i + 1]!)
-  }
-
   const method = req.method ?? 'GET'
-  const body = method === 'GET' || method === 'HEAD' ? null : toBodyStream(req)
+  const hasBody = method !== 'GET' && method !== 'HEAD'
+
+  if (ingress.lazyRequest) {
+    // Validate and normalize here what the Request constructor would, so failures still become 400.
+    return lazyRequest({
+      url: normalizeUrl(scheme, originForm ? host : undefined, target),
+      method: normalizeMethod(method),
+      rawHeaders: req.rawHeaders,
+      signal,
+      body: hasBody ? { stream: () => toBodyStream(req), read: () => readBody(req) } : null,
+    })
+  }
+
+  const url = originForm ? `${scheme}://${host}${target}` : target
+  const body = hasBody ? toBodyStream(req) : null
   // `duplex` is required by Node for streaming request bodies but missing from the DOM types.
-  const init: RequestInit & { duplex: 'half' } = { method, headers, body, signal, duplex: 'half' }
+  const init: RequestInit & { duplex: 'half' } = { method, headers: toHeaders(req.rawHeaders), body, signal, duplex: 'half' }
   return new Request(url, init)
 }
 
@@ -182,6 +212,9 @@ function respondEmpty(res: NodeResponse, status: number): void {
 }
 
 async function writeResponse(response: Response, req: NodeRequest, res: NodeResponse, signal: AbortSignal): Promise<void> {
+  const fast = fastResponseParts(response)
+  if (fast !== undefined) return writeFastResponse(fast, req, res, signal)
+
   const body = response.body
   if (signal.aborted) {
     await body?.cancel()
@@ -193,25 +226,45 @@ async function writeResponse(response: Response, req: NodeRequest, res: NodeResp
     if (signal.aborted) return
   }
 
-  const http2 = res instanceof Http2ServerResponse
-  const headers: Record<string, string | string[]> = {}
-  for (const [name, value] of response.headers) {
-    if (name !== 'set-cookie' && !(http2 && HTTP2_CONNECTION_HEADERS.has(name))) headers[name] = value
-  }
-  // Set-Cookie values must stay separate because commas can occur inside individual cookies.
-  const cookies = response.headers.getSetCookie()
-  if (cookies.length > 0) headers['set-cookie'] = cookies
-
-  if (res instanceof Http2ServerResponse) res.writeHead(response.status, headers)
-  else if (response.statusText !== '') res.writeHead(response.status, response.statusText, headers)
-  else res.writeHead(response.status, headers)
-
+  writeHead(res, response.status, response.statusText, toNodeHeaders(response.headers, res))
   if (body === null || req.method === 'HEAD') {
     res.end()
     return
   }
 
   await writeBody(body, res, signal)
+}
+
+/** Write an unread FastResponse in one `end()` call, with Content-Length for its body. */
+function writeFastResponse(parts: FastResponseParts, req: NodeRequest, res: NodeResponse, signal: AbortSignal): void {
+  if (signal.aborted) return
+  const headers = parts.headers === undefined ? {} : toNodeHeaders(parts.headers, res)
+  if (parts.contentType !== undefined) headers['content-type'] = parts.contentType
+  const { body } = parts
+  if (body !== null && headers['content-length'] === undefined) {
+    headers['content-length'] = String(typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength)
+  }
+  writeHead(res, parts.status, parts.statusText, headers)
+  if (body === null || req.method === 'HEAD') res.end()
+  else res.end(body)
+}
+
+function toNodeHeaders(source: Headers, res: NodeResponse): Record<string, string | string[]> {
+  const http2 = res instanceof Http2ServerResponse
+  const headers: Record<string, string | string[]> = {}
+  for (const [name, value] of source) {
+    if (name !== 'set-cookie' && !(http2 && HTTP2_CONNECTION_HEADERS.has(name))) headers[name] = value
+  }
+  // Set-Cookie values must stay separate because commas can occur inside individual cookies.
+  const cookies = source.getSetCookie()
+  if (cookies.length > 0) headers['set-cookie'] = cookies
+  return headers
+}
+
+function writeHead(res: NodeResponse, status: number, statusText: string, headers: Record<string, string | string[]>): void {
+  if (res instanceof Http2ServerResponse) res.writeHead(status, headers)
+  else if (statusText !== '') res.writeHead(status, statusText, headers)
+  else res.writeHead(status, headers)
 }
 
 /**

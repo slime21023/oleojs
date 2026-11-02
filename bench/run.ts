@@ -8,6 +8,7 @@ import { type Scenario, scenarios } from './scenarios.ts'
 interface Framework {
   readonly name: string
   readonly entry: string
+  readonly args?: readonly string[]
 }
 
 interface Measurement {
@@ -19,7 +20,9 @@ interface Measurement {
 
 const frameworks: readonly Framework[] = [
   { name: 'node:http', entry: 'apps/node-http.ts' },
+  { name: 'oleojs (lazyRequest: false)', entry: 'apps/oleojs.ts', args: ['--native-request'] },
   { name: 'oleojs', entry: 'apps/oleojs.ts' },
+  { name: 'oleojs + FastResponse', entry: 'apps/oleojs.ts', args: ['--fast-response'] },
   { name: 'express', entry: 'apps/express.ts' },
 ]
 
@@ -38,7 +41,7 @@ const connections = Number(options.connections)
 const selected = options.scenario === undefined ? scenarios : scenarios.filter((scenario) => options.scenario?.includes(scenario.name))
 
 async function start(framework: Framework): Promise<{ child: ChildProcess; port: number }> {
-  const child = spawn(process.execPath, [framework.entry], {
+  const child = spawn(process.execPath, [framework.entry, ...(framework.args ?? [])], {
     cwd: import.meta.dirname,
     env: { ...process.env, NODE_ENV: 'production' },
     stdio: ['ignore', 'pipe', 'inherit'],

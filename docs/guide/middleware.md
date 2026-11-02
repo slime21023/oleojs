@@ -38,7 +38,7 @@ Environment requirements combine automatically. If `needsDb` is an `HttpFilter<D
 
 - **Initial context.** `toFetch` creates one initial `Context` per request and never mutates it. Routing and context keys may create derived contexts as described below.
 - **`params`** is a shared, frozen empty object outside a matched route. Captured parameters use a null-prototype object so names such as `__proto__` are ordinary own properties. On a match with parameters, the router calls the handler with a derived context `{ ...ctx, params }`; it never mutates the context it received. Filters outside the router therefore never see route parameters.
-- **Passing data downstream:** use [context keys](/guide/middleware#context-keys). A filter may also pass a new request (`next(new Request(req, init), ctx)`).
+- **Passing data downstream:** use [context keys](/guide/middleware#context-keys). A filter may also pass a new request built from the incoming one's members, such as `next(new Request(req.url, { method: req.method, headers, signal: req.signal }), ctx)`. Avoid `new Request(req, init)`: it accepts only native requests, and the Node adapter passes a [lightweight request](/runtimes/node#performance) by default.
 - **Data only.** A context holds plain fields plus the symbol-keyed entries written by context keys.
 - **`ExecutionContext`** is an oleojs interface modeled on Cloudflare's. The core only passes it through or substitutes a stub. It never reads a platform global to obtain one.
 - **The `executionCtx` stub** (`STUB_EXECUTION_CTX` in `src/context-defaults.ts`) is used on runtimes without `waitUntil` and by the Node adapter.
