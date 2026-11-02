@@ -3,18 +3,18 @@
 import { describe, expect, it } from 'vitest'
 
 const surfaces = {
-  'oleo.js': {
+  'oleojs': {
     load: () => import('../../src/index.ts'),
     names: [
       'compose', 'contextKey', 'del', 'get', 'group', 'head', 'inspectRoutes', 'options', 'patch',
       'post', 'put', 'route', 'router', 'routesFor', 'toFetch', 'withFilters', 'withRouteCheck',
     ],
   },
-  'oleo.js/filters': {
+  'oleojs/filters': {
     load: () => import('../../src/filters/index.ts'),
     names: ['bearerAuth', 'bodyLimit', 'cors', 'mapRequest', 'mapResponse', 'problemDetails', 'requestLogger', 'responseHeaders'],
   },
-  'oleo.js/contract': {
+  'oleojs/contract': {
     load: () => import('../../src/contract/index.ts'),
     names: ['contract', 'contractFor', 'toOpenApi'],
   },

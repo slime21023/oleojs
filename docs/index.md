@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: oleo.js
+  name: oleojs
   text: HTTP routing and middleware for every runtime
   tagline: Compose applications from functions over native Request and Response, with zero runtime dependencies.
   actions:
@@ -14,7 +14,7 @@ hero:
       link: /guide/introduction
     - theme: alt
       text: GitHub
-      link: https://github.com/slime21023/oleo.js
+      link: https://github.com/slime21023/oleojs
 
 features:
   - title: An application is a function

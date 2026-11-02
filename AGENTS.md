@@ -1,6 +1,6 @@
-# oleo.js
+# oleojs
 
-oleo.js is a small, portable HTTP routing and middleware library for TypeScript. Its goal is to make HTTP services easy to compose, understand, and maintain while preserving native Web semantics.
+oleojs is a small, portable HTTP routing and middleware library for TypeScript. Its goal is to make HTTP services easy to compose, understand, and maintain while preserving native Web semantics.
 
 ## Core goals
 

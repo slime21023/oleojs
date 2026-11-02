@@ -3,9 +3,9 @@
   "compilerOptions": {
     // Documentation examples import the package by name, as applications do.
     "paths": {
-      "oleo.js": ["./src/index.ts"],
-      "oleo.js/filters": ["./src/filters/index.ts"],
-      "oleo.js/contract": ["./src/contract/index.ts"]
+      "oleojs": ["./src/index.ts"],
+      "oleojs/filters": ["./src/filters/index.ts"],
+      "oleojs/contract": ["./src/contract/index.ts"]
     }
   },
   "include": ["docs/examples"],

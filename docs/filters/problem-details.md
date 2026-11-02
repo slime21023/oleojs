@@ -3,8 +3,8 @@
 Wrap a router with `problemDetails()` to render errors as [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html) problem documents:
 
 ```ts
-import { get, router, toFetch } from 'oleo.js'
-import { problemDetails } from 'oleo.js/filters'
+import { get, router, toFetch } from 'oleojs'
+import { problemDetails } from 'oleojs/filters'
 
 const routes = router(get('/health', () => new Response('ok')))
 
@@ -20,7 +20,7 @@ An unknown path now returns a `404` response with `Content-Type: application/pro
 Generated HEAD responses remain bodyless. When an empty response is converted, its headers are copied, Content-Type is replaced, and stale Content-Length and Content-Encoding values are removed. Headers such as Allow and WWW-Authenticate are preserved.
 
 
-Implemented in [`src/filters/problem-details.ts`](https://github.com/slime21023/oleo.js/blob/main/src/filters/problem-details.ts), following [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html).
+Implemented in [`src/filters/problem-details.ts`](https://github.com/slime21023/oleojs/blob/main/src/filters/problem-details.ts), following [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html).
 
 ```ts
 interface Problem {

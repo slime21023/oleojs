@@ -2,7 +2,7 @@
 
 ## Request lifecycle
 
-1. **Entry.** The runtime, or `oleo.js/node`, calls `fetch`. `fetch` creates the `Context` and calls the composed handler.
+1. **Entry.** The runtime, or `oleojs/node`, calls `fetch`. `fetch` creates the `Context` and calls the composed handler.
 2. **Filters (inbound).** The request passes through the composed filters. Filters may derive the context through context keys, or short-circuit (for example, on a CORS preflight).
 3. **Routing.** The router extracts the path, walks the trie, and derives the context with `params`.
 4. **Handler.** The matched handler runs. Otherwise the router returns its default 404, 405, or 400 response (see [HTTP semantics](/reference/http-semantics)).

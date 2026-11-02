@@ -3,8 +3,8 @@
 A filter wraps a handler. `withFilters(handler, a, b)` applies filters in one call and means `a(b(handler))`: the first filter is outermost. Use `compose(a, b)` when you want to reuse that stack with several handlers.
 
 ```ts
-import { contextKey, get, router, toFetch, withFilters } from 'oleo.js'
-import type { HttpFilter } from 'oleo.js'
+import { contextKey, get, router, toFetch, withFilters } from 'oleojs'
+import type { HttpFilter } from 'oleojs'
 
 const requestIdKey = contextKey<string>('request-id')
 
@@ -40,7 +40,7 @@ Environment requirements combine automatically. If `needsDb` is an `HttpFilter<D
 - **`params`** is a shared, frozen empty object outside a matched route. Captured parameters use a null-prototype object so names such as `__proto__` are ordinary own properties. On a match with parameters, the router calls the handler with a derived context `{ ...ctx, params }`; it never mutates the context it received. Filters outside the router therefore never see route parameters.
 - **Passing data downstream:** use [context keys](/guide/middleware#context-keys). A filter may also pass a new request (`next(new Request(req, init), ctx)`).
 - **Data only.** A context holds plain fields plus the symbol-keyed entries written by context keys.
-- **`ExecutionContext`** is an oleo.js interface modeled on Cloudflare's. The core only passes it through or substitutes a stub. It never reads a platform global to obtain one.
+- **`ExecutionContext`** is an oleojs interface modeled on Cloudflare's. The core only passes it through or substitutes a stub. It never reads a platform global to obtain one.
 - **The `executionCtx` stub** (`STUB_EXECUTION_CTX` in `src/context-defaults.ts`) is used on runtimes without `waitUntil` and by the Node adapter.
   - It reports a rejection with `console.error`, so the promise never becomes an unhandled rejection and the failure is not silently lost.
   - It does not extend the request lifetime.

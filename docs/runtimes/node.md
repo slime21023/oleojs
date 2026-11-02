@@ -2,7 +2,7 @@
 
 ```ts
 import { createServer } from 'node:http'
-import { toNodeListener } from 'oleo.js/node'
+import { toNodeListener } from 'oleojs/node'
 import app from './app.ts'
 
 const env = { db: await openDatabase() }

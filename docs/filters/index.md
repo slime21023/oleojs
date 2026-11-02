@@ -1,10 +1,10 @@
 # Filters
 
-The standard filters are available from `oleo.js/filters`. They compose with custom filters and preserve handler environment and route-parameter types.
+The standard filters are available from `oleojs/filters`. They compose with custom filters and preserve handler environment and route-parameter types.
 
 ```ts
-import { contextKey, get, group, router, toFetch, withFilters } from 'oleo.js'
-import { bearerAuth, cors, problemDetails, requestLogger } from 'oleo.js/filters'
+import { contextKey, get, group, router, toFetch, withFilters } from 'oleojs'
+import { bearerAuth, cors, problemDetails, requestLogger } from 'oleojs/filters'
 
 interface User { id: string }
 interface Env { verifyToken(token: string): Promise<User | undefined> }
@@ -40,7 +40,7 @@ Each factory validates its options when called. Filters keep the package free of
 
 ## Common rules
 
-- **Location:** `src/filters/`, exported as `oleo.js/filters`. The `exports` map includes `./filters` → `dist/filters/index.js`. These are portable packages: ECMA-262 and ECMA-429 only, with the same lint and type isolation as the core.
+- **Location:** `src/filters/`, exported as `oleojs/filters`. The `exports` map includes `./filters` → `dist/filters/index.js`. These are portable packages: ECMA-262 and ECMA-429 only, with the same lint and type isolation as the core.
 - **Factories:** every filter is a factory (`cors(options)`, `bearerAuth(options)`, `problemDetails(options?)`, `requestLogger(options?)`, `bodyLimit(options)`) that returns an `HttpFilter`.
 - **Fail fast:** a factory validates its options and throws a `TypeError` immediately, never at request time.
 - **Tree-shaking:** named exports from one entry, and the package declares `sideEffects: false`. Unused filters drop out of bundles.

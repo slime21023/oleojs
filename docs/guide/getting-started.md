@@ -3,10 +3,10 @@
 ## Installation
 
 ```sh
-npm install oleo.js
+npm install oleojs
 ```
 
-oleo.js has no runtime dependencies. It runs on Cloudflare Workers, Deno, Bun, and Node.js 22 or later. Type inference is verified with TypeScript 7; older TypeScript versions are untested.
+oleojs has no runtime dependencies. It runs on Cloudflare Workers, Deno, Bun, and Node.js 22 or later. Type inference is verified with TypeScript 7; older TypeScript versions are untested.
 
 ::: warning Not yet published
 The package is not on npm yet (version `0.0.0`). Until the first release, build it from the repository with `bun run build` and depend on the local checkout.
@@ -17,7 +17,7 @@ The package is not on npm yet (version `0.0.0`). Until the first release, build 
 Create an application in `app.ts`:
 
 ```ts
-import { get, group, router, toFetch } from 'oleo.js'
+import { get, group, router, toFetch } from 'oleojs'
 
 const routes = router(
   get('/health', () => new Response('ok')),

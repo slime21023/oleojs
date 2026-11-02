@@ -9,7 +9,7 @@ A group joins a prefix onto its routes when `router()` is called and flattens th
 
 ## API
 
-`group(prefix, ...items)` and `group(prefix, options, ...items)` return a `RouteGroup`. Items are routes or nested groups. `GroupOptions<E>` has one optional field, `filters: readonly HttpFilter<E>[]`. Both call shapes share one signature, `group(prefix, ...rest: GroupArgs<E, TPrefix, TBase>)`, so an item whose required parameters the prefixes do not supply is reported as that missing parameter. The exact signature and inference constraints live in [`src/routing/route.ts`](https://github.com/slime21023/oleo.js/blob/main/src/routing/route.ts).
+`group(prefix, ...items)` and `group(prefix, options, ...items)` return a `RouteGroup`. Items are routes or nested groups. `GroupOptions<E>` has one optional field, `filters: readonly HttpFilter<E>[]`. Both call shapes share one signature, `group(prefix, ...rest: GroupArgs<E, TPrefix, TBase>)`, so an item whose required parameters the prefixes do not supply is reported as that missing parameter. The exact signature and inference constraints live in [`src/routing/route.ts`](https://github.com/slime21023/oleojs/blob/main/src/routing/route.ts).
 
 ```ts
 const app = router(
@@ -44,7 +44,7 @@ const app = router(
 
 ## Types
 
-Route and group types carry the parameters their enclosing prefixes must supply, so a misplaced route is a compile error that names the missing parameter. Contributors: the mechanisms behind this are listed in the [type inference contract](https://github.com/slime21023/oleo.js/blob/main/CONTRIBUTING.md#type-inference-contract).
+Route and group types carry the parameters their enclosing prefixes must supply, so a misplaced route is a compile error that names the missing parameter. Contributors: the mechanisms behind this are listed in the [type inference contract](https://github.com/slime21023/oleojs/blob/main/CONTRIBUTING.md#type-inference-contract).
 
 - **Inline routes:** prefix parameters accumulate through nested groups, including the options form. `E` flows from `router<E>()`; a filter requiring an incompatible env is a compile error.
 - **Routes defined in another module:** use [`routesFor<Env>()`](#routes-declared-in-other-modules), or export a function or constant whose type is annotated as `RouteGroup` or `RouteGroup<Env>`. The annotation supplies the context that inference needs:
@@ -65,8 +65,8 @@ Route and group types carry the parameters their enclosing prefixes must supply,
 Inside `router<Env>(...)`, route handlers infer `ctx.env` and the parameters of every enclosing group. Routes declared on their own have no such context. `routesFor<Env>()` binds the helpers to an environment instead, so those handlers need no annotations:
 
 ```ts
-import { routesFor } from 'oleo.js'
-import type { ParamsOf } from 'oleo.js'
+import { routesFor } from 'oleojs'
+import type { ParamsOf } from 'oleojs'
 import type { Env } from './env.ts'
 
 const { get, group } = routesFor<Env>()
@@ -81,7 +81,7 @@ const { get: getForUser } = routesFor<Env, ParamsOf<'/users/:userId'>>()
 export const settings = getForUser('/settings', (_request, ctx) => new Response(ctx.params.userId))
 ```
 
-`routesFor` returns the existing helpers and binds only their types. Its `group` fixes the enclosing parameters to the second type argument. For a group nested inline inside a parameterized group, use the core `group`, which infers them. `contractFor<Env>()` from `oleo.js/contract` does the same for contracts.
+`routesFor` returns the existing helpers and binds only their types. Its `group` fixes the enclosing parameters to the second type argument. For a group nested inline inside a parameterized group, use the core `group`, which infers them. `contractFor<Env>()` from `oleojs/contract` does the same for contracts.
 
 ## Environment-bound helpers
 
@@ -89,5 +89,5 @@ A route declared on its own, such as in another module, has no surrounding `rout
 
 - **Method helpers** default their enclosing parameters to `TBase` and still infer them inline, so `routesFor<Env, ParamsOf<'/users/:userId'>>().get('/settings', …)` sees `userId` and fits only under groups that supply it.
 - **`group`** fixes its enclosing parameters to `TBase`. A group declared on its own therefore types its inline routes with its prefix parameters, which an unannotated core `group()` cannot. For a group nested inline inside a parameterized group, use the core `group()`, which infers the enclosing parameters.
-- **No runtime cost.** The result is one frozen object holding the module's own helper functions, shared by every call. `contractFor<E, TBase>()` in `oleo.js/contract` binds `contract` the same way.
+- **No runtime cost.** The result is one frozen object holding the module's own helper functions, shared by every call. `contractFor<E, TBase>()` in `oleojs/contract` binds `contract` the same way.
 

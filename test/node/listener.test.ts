@@ -108,7 +108,7 @@ describe('ingress', () => {
     expect([accepted.status, accepted.body.length]).toEqual([200, 1024])
   })
 
-  it('exports only the reviewed values from oleo.js/node', async () => {
+  it('exports only the reviewed values from oleojs/node', async () => {
     expect(Object.keys(await import('../../src/node/index.ts'))).toEqual(['toNodeListener'])
   })
 

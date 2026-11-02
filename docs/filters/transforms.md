@@ -5,8 +5,8 @@ Use `mapRequest((request, ctx) => ...)` to pass a transformed request downstream
 For static response headers, `responseHeaders(headers)` handles copying and reconstruction:
 
 ```ts
-import { get, router, toFetch, withFilters } from 'oleo.js'
-import { mapRequest, responseHeaders } from 'oleo.js/filters'
+import { get, router, toFetch, withFilters } from 'oleojs'
+import { mapRequest, responseHeaders } from 'oleojs/filters'
 
 const routes = router(get('/language', (request) =>
   new Response(request.headers.get('Accept-Language')),
@@ -29,7 +29,7 @@ export default toFetch(app)
 Callbacks can use an environment inferred from the surrounding router/group or a typed handler passed to `withFilters`. For a separately declared transform, annotate `ctx: Context<Env>` or use the exported `RequestTransform<Env>` / `ResponseTransform<Env>` types.
 
 
-These helpers are exported from `oleo.js/filters`. They follow the same portable API and native-message preservation rules as standard filters.
+These helpers are exported from `oleojs/filters`. They follow the same portable API and native-message preservation rules as standard filters.
 
 ## `mapRequest(transform)` and `mapResponse(transform)`
 

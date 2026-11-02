@@ -1,7 +1,7 @@
 # API overview
 
 
-The package exposes four entry points: `oleo.js`, `oleo.js/filters`, `oleo.js/contract`, and `oleo.js/node`.
+The package exposes four entry points: `oleojs`, `oleojs/filters`, `oleojs/contract`, and `oleojs/node`.
 
 | Module | Public API | Purpose |
 | --- | --- | --- |
@@ -13,23 +13,23 @@ The package exposes four entry points: `oleo.js`, `oleo.js/filters`, `oleo.js/co
 | Fetch entry point | `toFetch`, `FetchHandler`, `ExecutionContext` | Create a per-request context and expose a callable `fetch` entry point that requires the environment its handler needs. |
 | Route types | `Route`, `RouteItem`, `Params`, `ParamsOf`, `JoinParams` | Describe route values and type handlers declared separately from their routes. |
 | Extension API | `inspectRoutes`, `withRouteCheck`, `RouteEntry` | List routes as `router()` registers them and attach definition-time checks, for documentation and tooling packages. |
-| CORS | `cors`, `CorsOptions` from `oleo.js/filters` | Apply an explicit origin policy, handle preflights, and add response headers. |
-| Bearer authentication | `bearerAuth`, `BearerAuthOptions` from `oleo.js/filters` | Verify tokens through application code and optionally store a typed principal. |
-| Problem details | `problemDetails`, `Problem`, `ProblemDetailsOptions` from `oleo.js/filters` | Convert thrown errors and empty error responses into problem documents. |
-| Request logging | `requestLogger`, `LogEntry`, `RequestLoggerOptions` from `oleo.js/filters` | Record the request outcome and duration, with optional application fields. |
-| Body size limit | `bodyLimit`, `BodyLimitOptions` from `oleo.js/filters` | Reject request bodies over a byte limit with `413` before handlers read them. |
-| Request/response transformations | `mapRequest`, `mapResponse`, `responseHeaders` from `oleo.js/filters` | Transform messages with synchronous or asynchronous callbacks, or set response headers. |
-| Contracts | `contract`, `contractFor`, `toOpenApi` from `oleo.js/contract` | Validate inputs with application-owned schemas, infer their outputs, and generate OpenAPI 3.1.1 from the same routes. |
-| Node.js adapter | `toNodeListener`, `NodeListenerOptions` from `oleo.js/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. |
+| CORS | `cors`, `CorsOptions` from `oleojs/filters` | Apply an explicit origin policy, handle preflights, and add response headers. |
+| Bearer authentication | `bearerAuth`, `BearerAuthOptions` from `oleojs/filters` | Verify tokens through application code and optionally store a typed principal. |
+| Problem details | `problemDetails`, `Problem`, `ProblemDetailsOptions` from `oleojs/filters` | Convert thrown errors and empty error responses into problem documents. |
+| Request logging | `requestLogger`, `LogEntry`, `RequestLoggerOptions` from `oleojs/filters` | Record the request outcome and duration, with optional application fields. |
+| Body size limit | `bodyLimit`, `BodyLimitOptions` from `oleojs/filters` | Reject request bodies over a byte limit with `413` before handlers read them. |
+| Request/response transformations | `mapRequest`, `mapResponse`, `responseHeaders` from `oleojs/filters` | Transform messages with synchronous or asynchronous callbacks, or set response headers. |
+| Contracts | `contract`, `contractFor`, `toOpenApi` from `oleojs/contract` | Validate inputs with application-owned schemas, infer their outputs, and generate OpenAPI 3.1.1 from the same routes. |
+| Node.js adapter | `toNodeListener`, `NodeListenerOptions` from `oleojs/node` | Bridge Node.js HTTP/1.1 and HTTP/2 compatibility servers to Web requests and responses, including streaming and disconnect handling. |
 
-Routing, composition, context, and Fetch APIs are exported from `oleo.js`. Filters, contracts, and the Node.js adapter have their own entry points.
+Routing, composition, context, and Fetch APIs are exported from `oleojs`. Filters, contracts, and the Node.js adapter have their own entry points.
 
 ## Core functions
 
 An application is plain function composition. There is no application class and no mutable registration step.
 
 ```ts
-import { router, get, post, del, toFetch, withFilters } from 'oleo.js'
+import { router, get, post, del, toFetch, withFilters } from 'oleojs'
 
 const routes = router(
   get('/users/:id', (req, ctx) => Response.json({ id: ctx.params.id })),
@@ -37,7 +37,7 @@ const routes = router(
   del('/users/:id', requireAdmin(deleteUser)), // route-level filter: wrap the handler
 )
 
-// Application-provided filters; standard alternatives are exported from oleo.js/filters.
+// Application-provided filters; standard alternatives are exported from oleojs/filters.
 const app = withFilters(routes, logger(), requireAuth())
 
 export default toFetch(app)
@@ -62,17 +62,17 @@ export default toFetch(app)
 
 ## Types
 
-Exact declarations live in [`src/types.ts`](https://github.com/slime21023/oleo.js/blob/main/src/types.ts); public exports live in [`src/index.ts`](https://github.com/slime21023/oleo.js/blob/main/src/index.ts).
+Exact declarations live in [`src/types.ts`](https://github.com/slime21023/oleojs/blob/main/src/types.ts); public exports live in [`src/index.ts`](https://github.com/slime21023/oleojs/blob/main/src/index.ts).
 
 | Type | Contract |
 | --- | --- |
 | `Params` | `Readonly<Record<string, string>>` |
 | `Context<E, P>` | Readonly `params`, `env`, and `executionCtx` fields; defaults are `E = unknown`, `P = Params` |
-| `ExecutionContext` | oleo.js interface with `waitUntil(promise: Promise<unknown>): void` |
+| `ExecutionContext` | oleojs interface with `waitUntil(promise: Promise<unknown>): void` |
 | `HttpHandler<E, P>` | `(req: Request, ctx: Context<E, P>) => Response \| Promise<Response>` |
 | `HttpFilter<E>` | Wraps a handler; requires at least env `E`, preserving the handler's env and parameter types |
 | `FetchHandler<E>` | A detachable `fetch(request, env?, executionCtx?)` returning `Promise<Response>` |
 | `ParamsOf<TPattern>` | Exported for separately declared handlers; `'/users/:id/*'` yields readonly `id` and `'*'` strings; a non-literal `string` yields `Params` |
 
-The [type inference contract](https://github.com/slime21023/oleo.js/blob/main/CONTRIBUTING.md#type-inference-contract) explains the required generic and phantom-member design.
+The [type inference contract](https://github.com/slime21023/oleojs/blob/main/CONTRIBUTING.md#type-inference-contract) explains the required generic and phantom-member design.
 

@@ -1,21 +1,21 @@
-# Contributing to oleo.js
+# Contributing to oleojs
 
-This guide records how oleo.js is built and verified. [AGENTS.md](AGENTS.md) states the project goals and architectural principles; the [documentation site](https://slime21023.github.io/oleo.js/) describes the public API and its behavior.
+This guide records how oleojs is built and verified. [AGENTS.md](AGENTS.md) states the project goals and architectural principles; the [documentation site](https://slime21023.github.io/oleojs/) describes the public API and its behavior.
 
 ## Scope and status
 
 | Export | Tier | Contents | Status |
 | --- | --- | --- | --- |
-| `oleo.js` | Portable | Router, route helpers, groups, environment-bound helpers (`routesFor`), core types, `compose`, `withFilters`, context keys, `toFetch` | Phases 1–2 implemented |
-| `oleo.js/node` | Adapter | `node:http` / `node:http2` bridge | Implemented |
-| `oleo.js/filters` | Portable | CORS, Bearer authentication, RFC 9457 errors, request logging, body size limits, and message transformations | Phase 3 implemented, with `bodyLimit` and transformation helpers |
-| `oleo.js/contract` | Portable | Declarative contracts, environment-bound contracts (`contractFor`), Standard Schema input validation, OpenAPI 3.1.1 generation | Phase 4 implemented |
+| `oleojs` | Portable | Router, route helpers, groups, environment-bound helpers (`routesFor`), core types, `compose`, `withFilters`, context keys, `toFetch` | Phases 1–2 implemented |
+| `oleojs/node` | Adapter | `node:http` / `node:http2` bridge | Implemented |
+| `oleojs/filters` | Portable | CORS, Bearer authentication, RFC 9457 errors, request logging, body size limits, and message transformations | Phase 3 implemented, with `bodyLimit` and transformation helpers |
+| `oleojs/contract` | Portable | Declarative contracts, environment-bound contracts (`contractFor`), Standard Schema input validation, OpenAPI 3.1.1 generation | Phase 4 implemented |
 
-Phases 1–4 are implemented, including the four original [standard filters](https://slime21023.github.io/oleo.js/filters/), [`bodyLimit`](https://slime21023.github.io/oleo.js/filters/body-limit), and the optional [Contract module](https://slime21023.github.io/oleo.js/contracts/).
+Phases 1–4 are implemented, including the four original [standard filters](https://slime21023.github.io/oleojs/filters/), [`bodyLimit`](https://slime21023.github.io/oleojs/filters/body-limit), and the optional [Contract module](https://slime21023.github.io/oleojs/contracts/).
 
 Read the [hard rules](#hard-rules) and [development workflow](#development-environment) before changing code. Use the [repository layout](#repository-layout) to locate implementations and tests.
 
-The public behavior contracts live on the documentation site, whose source is `docs/`: [Core API](https://slime21023.github.io/oleo.js/reference/api) · [Routing](https://slime21023.github.io/oleo.js/reference/routing) · [Route groups](https://slime21023.github.io/oleo.js/guide/groups) · [HTTP semantics](https://slime21023.github.io/oleo.js/reference/http-semantics) · [Node adapter](https://slime21023.github.io/oleo.js/runtimes/node) · [Standard filters](https://slime21023.github.io/oleo.js/filters/). A change to public behavior updates the matching page in the same commit.
+The public behavior contracts live on the documentation site, whose source is `docs/`: [Core API](https://slime21023.github.io/oleojs/reference/api) · [Routing](https://slime21023.github.io/oleojs/reference/routing) · [Route groups](https://slime21023.github.io/oleojs/guide/groups) · [HTTP semantics](https://slime21023.github.io/oleojs/reference/http-semantics) · [Node adapter](https://slime21023.github.io/oleojs/runtimes/node) · [Standard filters](https://slime21023.github.io/oleojs/filters/). A change to public behavior updates the matching page in the same commit.
 
 ## Hard rules
 
@@ -25,9 +25,9 @@ The public behavior contracts live on the documentation site, whose source is `d
 4. **`Context` holds data only.** Never add helper methods (`ctx.json()`, `ctx.text()`, …) to it.
 5. **Routing hot path:** no `new URL()`, `split()`, regex, or substring allocation for static comparison. See [Performance budget](#performance-budget).
 6. **Route definition errors throw when `router()` is called**, never at request time.
-7. **Do not present oleo.js conventions as standards.** The `{ fetch }` entry shape and `ExecutionContext` are not WinterTC APIs.
+7. **Do not present oleojs conventions as standards.** The `{ fetch }` entry shape and `ExecutionContext` are not WinterTC APIs.
 8. **Keep the public surface small.** An entry point exports a value or type only if applications or extension authors write it themselves; see [Package manifest](#package-manifest).
-9. **Extensions use only the public routing API.** `src/filters/` and `src/contract/` never import `src/routing/*` or `src/http-method.ts`; see [Extension API](https://slime21023.github.io/oleo.js/extending/).
+9. **Extensions use only the public routing API.** `src/filters/` and `src/contract/` never import `src/routing/*` or `src/http-method.ts`; see [Extension API](https://slime21023.github.io/oleojs/extending/).
 
 ## Development environment
 
@@ -72,7 +72,7 @@ Bun is the development tool, not a runtime target with special status. No source
 
 ```text
 src/
-  index.ts                  # `oleo.js` entry: public exports only
+  index.ts                  # `oleojs` entry: public exports only
   types.ts                  # core types (see Core API)
   path.ts                   # path bounds within request.url
   fetch.ts                  # toFetch: creates the per-request context
@@ -90,7 +90,7 @@ src/
     pattern.ts              # definition-time path validation and segment encoding
     trie.ts                 # segment trie: definition checks, matching, Allow lists
   filters/
-    index.ts                # `oleo.js/filters` entry
+    index.ts                # `oleojs/filters` entry
     cors.ts                 # origin policy, preflight handling, and copied response headers
     bearer-auth.ts          # Bearer credentials, verification, and typed principals
     problem-details.ts      # problem documents, error mapping, and isolated reporting
@@ -100,10 +100,10 @@ src/
     map-response.ts         # synchronous/asynchronous response transformations
     response-headers.ts     # header snapshots and response reconstruction
   node/
-    index.ts                # `oleo.js/node` entry
+    index.ts                # `oleojs/node` entry
     listener.ts             # toNodeListener: ingress, egress, errors, disconnects, body discarding
   contract/
-    index.ts                # `oleo.js/contract` public entry
+    index.ts                # `oleojs/contract` public entry
     types.ts / standard-schema.ts # public contracts and structural schema interfaces
     contract.ts             # Route creation, metadata, full-path checks, and contractFor (public core API only)
     definition.ts           # declaration validation and snapshots
@@ -188,7 +188,7 @@ Coding rules that follow from these options:
 - `"type": "module"`, `"sideEffects": false`, `"files": ["dist"]`.
 - `exports` maps `.` → `dist/index.js`, `./filters` → `dist/filters/index.js`, `./contract` → `dist/contract/index.js`, and `./node` → `dist/node/index.js`, each with a `types` condition.
 - **Public surface policy.** Export a value or type from an entry point only if applications or extension authors write it themselves. A type that only appears inside another signature stays in its module and is still visible in declarations and editor hovers. For example, `FetchArgs`, `GroupArgs`, `BoundMethodHelper`, and `NodeListenerArgs` stay in their modules, while `RouteHelpers` and `BoundContract` are exported because users annotate them.
-  - **Guard:** `test/portable/api-surface.test.ts`, and the `oleo.js/node` case in `test/node/listener.test.ts`, assert each entry's exact value exports. Changing those lists is a deliberate API decision; review type exports alongside it.
+  - **Guard:** `test/portable/api-surface.test.ts`, and the `oleojs/node` case in `test/node/listener.test.ts`, assert each entry's exact value exports. Changing those lists is a deliberate API decision; review type exports alongside it.
 - `engines.node` covers the currently maintained Node.js LTS lines.
 - **Declaration files keep `.ts` specifiers.** `rewriteRelativeImportExtensions` rewrites them in emitted `.js` only, so the emitted `.d.ts` files still import `./routing/router.ts` and similar.
   - **Verified:** a consumer project on TypeScript 7 with `NodeNext` resolves them to the `.d.ts` files and keeps full inference. The built JavaScript also runs on Node, Bun, and Deno.
@@ -220,7 +220,7 @@ Keep these mechanisms intact:
 | Defaulted `TB` in `routesFor` and `contractFor` helpers | Inline routes still infer enclosing parameters from context; separately declared ones fall back to the bound `TBase` |
 | Fixed base in the bound `group` | An inferred base has no source outside a group, which also loses the prefix parameters of inline routes; fixing it to `TBase` keeps standalone groups typed |
 
-Phantom members are type-level only and are never set at runtime. The optional filter phantom keeps ordinary arrow functions assignable as filters. See [route groups](https://slime21023.github.io/oleo.js/guide/groups) for usage patterns.
+Phantom members are type-level only and are never set at runtime. The optional filter phantom keeps ordinary arrow functions assignable as filters. See [route groups](https://slime21023.github.io/oleojs/guide/groups) for usage patterns.
 
 ### Property-based tests
 
@@ -236,7 +236,7 @@ Phantom members are type-level only and are never set at runtime. The optional f
 
 ## Standards conformance
 
-WinterTC (Ecma TC55) standards specify runtimes, not libraries. oleo.js conforms in this precise sense: its portable packages depend only on APIs that a conformant runtime must provide.
+WinterTC (Ecma TC55) standards specify runtimes, not libraries. oleojs conforms in this precise sense: its portable packages depend only on APIs that a conformant runtime must provide.
 
 ### Baseline
 
@@ -261,7 +261,7 @@ Runtimes are identified by their ECMA TR/114 runtime keys.
 | `workerd` | Native | Native `{ fetch }` |
 | `deno` | Native | Native `{ fetch }` |
 | `bun` | Native | Native `{ fetch }` |
-| `node` | Native | Requires `oleo.js/node` |
+| `node` | Native | Requires `oleojs/node` |
 
 Node.js is not fully ECMA-429 conformant (its global object is not an `EventTarget`), but it provides every API the portable packages use. Supported versions are the currently maintained Node.js LTS lines.
 

@@ -1,6 +1,6 @@
 # `requestLogger(options?)`
 
-Implemented in [`src/filters/request-logger.ts`](https://github.com/slime21023/oleo.js/blob/main/src/filters/request-logger.ts).
+Implemented in [`src/filters/request-logger.ts`](https://github.com/slime21023/oleojs/blob/main/src/filters/request-logger.ts).
 
 ```ts
 interface LogEntry {

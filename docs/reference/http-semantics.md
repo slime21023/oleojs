@@ -22,7 +22,7 @@ const methodNotAllowedAsJson: HttpFilter = (next) => async (req, ctx) => {
 
 ## Errors
 
-- **The core never catches errors from handlers or filters.** A throw or rejection propagates, and the promise returned by `fetch` rejects. Mapping errors to responses is the job of an error filter (for example, RFC 9457 in `oleo.js/filters`).
+- **The core never catches errors from handlers or filters.** A throw or rejection propagates, and the promise returned by `fetch` rejects. Mapping errors to responses is the job of an error filter (for example, RFC 9457 in `oleojs/filters`).
 - **Native runtimes** then apply their own behavior for unhandled errors (typically a 500).
 - **The Node adapter** responds `500 Internal Server Error` with an empty body if headers have not been sent. Otherwise it destroys the socket. In both cases it reports the error with `console.error`. Client disconnects are not errors (see [Client disconnects](/runtimes/node#client-disconnects)).
 

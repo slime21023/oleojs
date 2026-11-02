@@ -2,7 +2,7 @@
 
 Use `router<Env>(...)` to make application environment data available as `ctx.env` with the expected type. For a direct call, supply that data as the second argument to `app.fetch(request, env)`. When the handler needs an environment, `env` is a required argument, so omitting it is a type error rather than a runtime crash. A handler whose environment may be `undefined` keeps it optional. A hosting runtime may supply its own second argument, so its meaning depends on the integration.
 
-`toFetch` returns an object whose `fetch` function can be called independently of the object. The `{ fetch }` shape and `ExecutionContext` are oleo.js conventions inspired by Workers, rather than WinterTC APIs.
+`toFetch` returns an object whose `fetch` function can be called independently of the object. The `{ fetch }` shape and `ExecutionContext` are oleojs conventions inspired by Workers, rather than WinterTC APIs.
 
 | Runtime | Application without env | Application with env |
 | --- | --- | --- |
@@ -13,11 +13,11 @@ Use `router<Env>(...)` to make application environment data available as `ctx.en
 
 Deno and Bun pass their own server objects as the second argument, so an application that needs an environment must be wrapped. See the [runtime guide](/runtimes/) for `waitUntil` behavior, Node.js proxy and body handling, and background work on each runtime. Server configuration and lifecycle remain under application control.
 
-An oleo.js application is a value with a `fetch` function:
+An oleojs application is a value with a `fetch` function:
 
 ```ts
 // app.ts
-import { router, toFetch } from 'oleo.js'
+import { router, toFetch } from 'oleojs'
 import { users } from './users.ts'
 
 export interface Env {
@@ -27,7 +27,7 @@ export interface Env {
 export default toFetch(router<Env>(users))
 ```
 
-`app.fetch(request, env, executionCtx?)` follows the Cloudflare Workers call shape. This shape and `ExecutionContext` are oleo.js conventions, not WinterTC APIs. The application code is the same everywhere. Each runtime differs only in what it passes as the second argument, and in whether it provides `waitUntil`.
+`app.fetch(request, env, executionCtx?)` follows the Cloudflare Workers call shape. This shape and `ExecutionContext` are oleojs conventions, not WinterTC APIs. The application code is the same everywhere. Each runtime differs only in what it passes as the second argument, and in whether it provides `waitUntil`.
 
 | Runtime | Second argument passed by the runtime | Entry point for an app **without** env | Entry point for an app **with** env |
 | --- | --- | --- | --- |

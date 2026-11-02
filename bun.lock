@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "oleo.js",
+      "name": "oleojs",
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.4.10",
         "@types/node": "26.6.6",

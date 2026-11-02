@@ -1,17 +1,17 @@
-# oleo.js
+# oleojs
 
 A zero-runtime-dependency HTTP router and middleware library for TypeScript. Build applications from functions, compose request handling explicitly, and work with native Web `Request` and `Response` objects.
 
 The portable core runs on Cloudflare Workers, Deno, and Bun. A separate adapter connects it to Node.js HTTP servers.
 
-**Documentation: https://slime21023.github.io/oleo.js/**
+**Documentation: https://slime21023.github.io/oleojs/**
 
 ## Quick start
 
 Create an application in `app.ts`:
 
 ```ts
-import { get, group, router, toFetch } from 'oleo.js'
+import { get, group, router, toFetch } from 'oleojs'
 
 const routes = router(
   get('/health', () => new Response('ok')),
@@ -44,10 +44,10 @@ console.log(await response.json()) // { userId: '42', postId: '7' }
 
 | Entry point | Contents | Guide |
 | --- | --- | --- |
-| `oleo.js` | Routing, groups, middleware composition, context keys, the Fetch entry point, and the extension API | [Guide](https://slime21023.github.io/oleo.js/guide/introduction) |
-| `oleo.js/filters` | CORS, Bearer authentication, RFC 9457 problem details, request logging, body size limits, and message transformations | [Filters](https://slime21023.github.io/oleo.js/filters/) |
-| `oleo.js/contract` | Validated inputs with Standard Schema and OpenAPI 3.1.1 generation | [Contracts](https://slime21023.github.io/oleo.js/contracts/) |
-| `oleo.js/node` | Node.js HTTP/1.1 and HTTP/2 adapter | [Node.js](https://slime21023.github.io/oleo.js/runtimes/node) |
+| `oleojs` | Routing, groups, middleware composition, context keys, the Fetch entry point, and the extension API | [Guide](https://slime21023.github.io/oleojs/guide/introduction) |
+| `oleojs/filters` | CORS, Bearer authentication, RFC 9457 problem details, request logging, body size limits, and message transformations | [Filters](https://slime21023.github.io/oleojs/filters/) |
+| `oleojs/contract` | Validated inputs with Standard Schema and OpenAPI 3.1.1 generation | [Contracts](https://slime21023.github.io/oleojs/contracts/) |
+| `oleojs/node` | Node.js HTTP/1.1 and HTTP/2 adapter | [Node.js](https://slime21023.github.io/oleojs/runtimes/node) |
 
 ## Runtimes
 
@@ -58,7 +58,7 @@ console.log(await response.json()) // { userId: '42', postId: '7' }
 | Bun | `export default app` | `Bun.serve({ fetch: (request) => app.fetch(request, env) })` |
 | Node.js | `createServer(toNodeListener(app))` | `createServer(toNodeListener(app, { env }))` |
 
-See the [runtime guide](https://slime21023.github.io/oleo.js/runtimes/) for details.
+See the [runtime guide](https://slime21023.github.io/oleojs/runtimes/) for details.
 
 ## Development
 
@@ -67,7 +67,7 @@ bun install
 bun run lint
 bun run typecheck
 bun run test
-bun run docs:dev   # documentation site at http://localhost:5173/oleo.js/
+bun run docs:dev   # documentation site at http://localhost:5173/oleojs/
 ```
 
 [CONTRIBUTING.md](CONTRIBUTING.md) covers the hard rules, toolchain, repository layout, testing, and standards conformance. [AGENTS.md](AGENTS.md) records the project's core goals and architectural principles.

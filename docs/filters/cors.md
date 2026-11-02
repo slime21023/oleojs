@@ -1,6 +1,6 @@
 # `cors(options)`
 
-Implemented in [`src/filters/cors.ts`](https://github.com/slime21023/oleo.js/blob/main/src/filters/cors.ts), using the [Fetch CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol).
+Implemented in [`src/filters/cors.ts`](https://github.com/slime21023/oleojs/blob/main/src/filters/cors.ts), using the [Fetch CORS protocol](https://fetch.spec.whatwg.org/#http-cors-protocol).
 
 ```ts
 interface CorsOptions {

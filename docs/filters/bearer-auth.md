@@ -1,6 +1,6 @@
 # `bearerAuth(options)`
 
-Implemented in [`src/filters/bearer-auth.ts`](https://github.com/slime21023/oleo.js/blob/main/src/filters/bearer-auth.ts), following [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.html).
+Implemented in [`src/filters/bearer-auth.ts`](https://github.com/slime21023/oleojs/blob/main/src/filters/bearer-auth.ts), following [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.html).
 
 ```ts
 interface BearerAuthOptions<E = unknown, T = unknown> {

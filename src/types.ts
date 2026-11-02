@@ -22,7 +22,7 @@ export type ParamsOf<TPattern extends string> =
 export type JoinParams<A extends Params, B extends Params> =
   { readonly [K in (keyof A | keyof B) & string]: string }
 
-/** Background-task support modeled on Workers; this is an oleo.js interface. */
+/** Background-task support modeled on Workers; this is an oleojs interface. */
 export interface ExecutionContext {
   /** Register background work; extending the request lifetime depends on the host. */
   waitUntil(promise: Promise<unknown>): void

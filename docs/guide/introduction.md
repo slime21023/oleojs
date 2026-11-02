@@ -1,6 +1,6 @@
 # Introduction
 
-oleo.js is a zero-dependency TypeScript HTTP router and middleware library. An application is a function `(Request, Context) => Response | Promise<Response>`, and middleware is a function that wraps one. The portable core uses only ECMA-262 and the WinterTC Minimum Common Web API (ECMA-429), so it runs unmodified on Cloudflare Workers, Deno, and Bun, and on Node.js through an adapter.
+oleojs is a zero-dependency TypeScript HTTP router and middleware library. An application is a function `(Request, Context) => Response | Promise<Response>`, and middleware is a function that wraps one. The portable core uses only ECMA-262 and the WinterTC Minimum Common Web API (ECMA-429), so it runs unmodified on Cloudflare Workers, Deno, and Bun, and on Node.js through an adapter.
 
 Design influences: [http4k](https://www.http4k.org/) (server as a function, composable filters) and [itty-router](https://itty.dev/itty-router) (minimal API surface, native `Request`/`Response`).
 
@@ -16,7 +16,7 @@ Design influences: [http4k](https://www.http4k.org/) (server as a function, comp
 
 These are not part of the core. Compose them as filters or separate packages instead:
 
-- **Schema validation rules.** Bring an application-owned validator through a filter or the optional `oleo.js/contract` integration; the core provides no schema language or validation engine.
+- **Schema validation rules.** Bring an application-owned validator through a filter or the optional `oleojs/contract` integration; the core provides no schema language or validation engine.
 - **Request/response wrappers or response builders.**
 - **Implicit URL normalization** (trailing slashes, case folding, duplicate slashes). Normalize in a filter if needed.
 - **File-system routing and view engines.**

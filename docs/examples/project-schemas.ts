@@ -1,4 +1,4 @@
-import type { StandardResult, StandardSchemaV1 } from 'oleo.js/contract'
+import type { StandardResult, StandardSchemaV1 } from 'oleojs/contract'
 
 export interface Project { id: number; name: string }
 export interface ProjectPage { items: Project[]; nextCursor: string | null }

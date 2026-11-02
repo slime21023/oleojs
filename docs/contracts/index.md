@@ -3,8 +3,8 @@
 `contract(definition, handler)` returns an ordinary Route. The handler receives `(request, ctx, input)`, where `input` contains only the declared sources, after validation and transformation. Schemas implement [Standard Schema](https://standardschema.dev/); the application chooses its validation library and rules.
 
 ```ts
-import { group, router, toFetch } from 'oleo.js'
-import { contract, toOpenApi } from 'oleo.js/contract'
+import { group, router, toFetch } from 'oleojs'
+import { contract, toOpenApi } from 'oleojs/contract'
 import { limitSchema } from './project-schemas.ts'
 
 const routes = group('/api', contract({

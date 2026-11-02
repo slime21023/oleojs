@@ -1,6 +1,6 @@
-import { contextKey, router, routesFor, toFetch, withFilters } from 'oleo.js'
-import { contractFor, toOpenApi } from 'oleo.js/contract'
-import { bearerAuth, bodyLimit, problemDetails } from 'oleo.js/filters'
+import { contextKey, router, routesFor, toFetch, withFilters } from 'oleojs'
+import { contractFor, toOpenApi } from 'oleojs/contract'
+import { bearerAuth, bodyLimit, problemDetails } from 'oleojs/filters'
 import {
   createProjectSchema, cursorSchema, limitSchema, projectIdSchema, projectPageSchema, projectSchema,
 } from './project-schemas.ts'

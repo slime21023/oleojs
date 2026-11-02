@@ -1,12 +1,12 @@
 import { defineConfig } from 'vitepress'
 
-const repository = 'https://github.com/slime21023/oleo.js'
+const repository = 'https://github.com/slime21023/oleojs'
 
 export default defineConfig({
-  title: 'oleo.js',
+  title: 'oleojs',
   description: 'A small, portable HTTP routing and middleware library for TypeScript.',
-  // Served from GitHub Pages at https://slime21023.github.io/oleo.js/.
-  base: '/oleo.js/',
+  // Served from GitHub Pages at https://slime21023.github.io/oleojs/.
+  base: '/oleojs/',
   cleanUrls: true,
   lastUpdated: true,
   // Examples are embedded into pages with <<<; they are not pages themselves.
