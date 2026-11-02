@@ -1,4 +1,4 @@
-import { type IncomingHttpHeaders, type OutgoingHttpHeaders, createServer, request as httpRequest } from 'node:http'
+import { type IncomingHttpHeaders, type IncomingMessage, type OutgoingHttpHeaders, type ServerResponse, createServer, request as httpRequest } from 'node:http'
 import { connect as http2Connect, createServer as createHttp2Server } from 'node:http2'
 import type { AddressInfo, Server } from 'node:net'
 import { connect as netConnect } from 'node:net'
@@ -207,6 +207,70 @@ describe('egress', () => {
     })
     const port = await serve(fetchable(() => new Response(body)))
     expect((await send(port, 'GET', '/')).body).toBe('abc')
+  })
+
+  it('stops pulling the response body while the client does not read', async () => {
+    const chunkCount = 64
+    let pulled = 0
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled === chunkCount) return controller.close()
+        controller.enqueue(new Uint8Array(1024 * 1024).fill(pulled++ % 256))
+      },
+    })
+    const port = await serve(fetchable(() => new Response(body)))
+    const res = await new Promise<IncomingMessage>((resolve) => httpRequest({ host: '127.0.0.1', port, path: '/' }, resolve).end())
+    res.pause()
+    // Wait until socket buffers are full and the adapter waits for drain.
+    let settled = -1
+    await vi.waitFor(() => {
+      const previous = settled
+      settled = pulled
+      expect(settled).toBe(previous)
+    }, { interval: 50 })
+    expect(pulled).toBeLessThan(chunkCount)
+
+    let received = 0
+    let intact = true
+    res.on('data', (chunk: Buffer) => {
+      // Each 1 MiB chunk is filled with its index, so bytes must arrive in order.
+      for (let i = 0; i < chunk.length; i++) intact &&= chunk[i] === Math.floor((received + i) / (1024 * 1024)) % 256
+      received += chunk.length
+    })
+    res.resume()
+    await new Promise((resolve) => res.on('end', resolve))
+    expect([received, intact]).toEqual([chunkCount * 1024 * 1024, true])
+  })
+
+  it('cancels the response body when the client disconnects while the adapter waits for drain', async () => {
+    const report = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let pulled = 0
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      pull: (controller) => controller.enqueue(new Uint8Array(1024 * 1024).fill(pulled++ % 256)),
+      cancel: () => void (cancelled = true),
+    })
+    const server = createServer(toNodeListener(fetchable(() => new Response(body))))
+    let serverRes: ServerResponse | undefined
+    server.on('request', (_req, res: ServerResponse) => (serverRes = res))
+    const port = await listen(server)
+    const req = httpRequest({ host: '127.0.0.1', port, path: '/' }, (res) => res.pause())
+    req.on('error', () => {})
+    req.end()
+    let settled = -1
+    await vi.waitFor(() => {
+      const previous = settled
+      settled = pulled
+      expect(settled).toBeGreaterThan(0)
+      expect(settled).toBe(previous)
+    }, { interval: 50 })
+    expect(serverRes?.listenerCount('drain')).toBe(1)
+    req.destroy()
+    await vi.waitFor(() => expect(cancelled).toBe(true))
+    // The adapter stops waiting for drain instead of leaving the write pending forever.
+    await vi.waitFor(() => expect(serverRes?.listenerCount('drain')).toBe(0))
+    expect(report).not.toHaveBeenCalled()
+    report.mockRestore()
   })
 
   it('writes no body for HEAD and cancels the response body', async () => {

@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Http2ServerRequest, Http2ServerResponse } from 'node:http2'
-import { Readable, pipeline } from 'node:stream'
-import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
+import { Readable } from 'node:stream'
 import { STUB_EXECUTION_CTX } from '../context-defaults.ts'
 import { FORBIDDEN_METHODS } from '../http-method.ts'
 import type { FetchArgs, FetchHandler } from '../types.ts'
@@ -212,11 +211,48 @@ async function writeResponse(response: Response, req: NodeRequest, res: NodeResp
     return
   }
 
-  return new Promise((resolve, reject) => {
-    pipeline(Readable.fromWeb(body as unknown as NodeReadableStream), res, (error) => {
-      // Body errors also abort the signal; only premature close is treated as a client disconnect.
-      if (error && (error as { code?: unknown }).code !== 'ERR_STREAM_PREMATURE_CLOSE') reject(error)
-      else resolve()
-    })
+  await writeBody(body, res, signal)
+}
+
+/**
+ * Copy a Web body to the response, waiting for `drain` when Node's buffer is full.
+ * A direct reader loop avoids the per-response cost of `Readable.fromWeb` and `pipeline`.
+ * A client disconnect cancels the body, which also ends a pending read; a cancellation
+ * failure propagates like a body error.
+ */
+async function writeBody(body: ReadableStream<Uint8Array>, res: NodeResponse, signal: AbortSignal): Promise<void> {
+  const reader = body.getReader()
+  let cancellation: Promise<void> | undefined
+  const cancel = () => {
+    cancellation = reader.cancel()
+    // Observed here so a failure is not also reported as unhandled before it is awaited below.
+    cancellation.catch(() => {})
+  }
+  signal.addEventListener('abort', cancel, { once: true })
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done || signal.aborted) break
+      // Narrow each protocol separately: their write overloads cannot be called as a union.
+      const accepted = res instanceof Http2ServerResponse ? res.write(value) : res.write(value)
+      if (!accepted) await drained(res)
+    }
+  } finally {
+    signal.removeEventListener('abort', cancel)
+  }
+  if (!signal.aborted) res.end()
+  else await (cancellation ?? reader.cancel())
+}
+
+/** Resolve once the response can accept more data or has closed. */
+function drained(res: NodeResponse): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      res.off('drain', done)
+      res.off('close', done)
+      resolve()
+    }
+    res.on('drain', done)
+    res.on('close', done)
   })
 }

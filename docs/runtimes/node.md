@@ -67,15 +67,15 @@ createServer(toNodeListener(toFetch(app), { env })).listen(3000)
 ### Egress: `Response` → `ServerResponse` / `Http2ServerResponse`
 
 - **Head:** `writeHead(status, statusText, headers)`. Multiple `Set-Cookie` values are written via `headers.getSetCookie()`. On HTTP/2, `Connection`, `Keep-Alive`, `Transfer-Encoding`, and `Upgrade` are dropped.
-- **Body:** `stream.pipeline(Readable.fromWeb(res.body), serverRes)`, which honors backpressure. An error destroys the socket. A client abort tears down the pipeline and cancels the web stream. A `null` body ends immediately, and `HEAD` writes no body.
-- **Cancellation failures:** `HEAD` cleanup finishes before headers are sent, so failure is reported and returns 500. Cleanup of a late response is also awaited and reported on failure; the adapter never writes to an already destroyed response.
+- **Body:** a reader loop writes each chunk with `serverRes.write()` and waits for `drain` when Node's buffer is full, so a client that stops reading stops the body from being pulled. This avoids the per-response cost of `Readable.fromWeb` and `stream.pipeline`. An error destroys the socket. A client abort cancels the web stream, which also ends a pending read or `drain` wait. A `null` body ends immediately, and `HEAD` writes no body.
+- **Cancellation failures:** `HEAD` cleanup finishes before headers are sent, so failure is reported and returns 500. Cancellation after a disconnect, whether the response arrived late or was mid-stream, is also awaited and reported on failure; the adapter never writes to an already destroyed response.
 - **No buffering** in either direction.
 
 ### Client disconnects
 
 - **Signalling:** the `Request`'s `signal` aborts whenever the response closes before it ends.
 - **Late responses:** if the app's response arrives after the client is gone, its body is cancelled and nothing is written.
-- **Not errors:** a disconnect surfaces in the pipeline as `ERR_STREAM_PREMATURE_CLOSE`. It is not reported, and only other pipeline errors count as server errors.
+- **Not errors:** a disconnect stops the body copy without an error. It is not reported; only body read errors and cancellation failures count as server errors.
 - **Do not classify by `signal.aborted`.** A failing response body also destroys the response, which aborts the signal.
 
 ### Other runtimes
