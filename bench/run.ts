@@ -1,5 +1,6 @@
-import { type ChildProcess, spawn } from 'node:child_process'
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
 import { once } from 'node:events'
+import { createServer } from 'node:net'
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import autocannon from 'autocannon'
@@ -9,7 +10,11 @@ interface Framework {
   readonly name: string
   readonly entry: string
   readonly args?: readonly string[]
+  /** Served by the runtime from a default export with `fetch`, on the port in `PORT`. */
+  readonly fetchEntry?: boolean
 }
+
+type Runtime = 'node' | 'bun'
 
 interface Measurement {
   readonly requestsPerSecond: number
@@ -18,11 +23,21 @@ interface Measurement {
   readonly failures: number
 }
 
-const frameworks: readonly Framework[] = [
+const nodeFrameworks: readonly Framework[] = [
   { name: 'node:http', entry: 'apps/node-http.ts' },
   { name: 'oleojs (lazyRequest: false)', entry: 'apps/oleojs.ts', args: ['--native-request'] },
   { name: 'oleojs', entry: 'apps/oleojs.ts' },
   { name: 'oleojs + FastResponse', entry: 'apps/oleojs.ts', args: ['--fast-response'] },
+  { name: 'express', entry: 'apps/express.ts' },
+]
+
+// On Bun, oleojs runs through its documented `export default app` entry; Express and the
+// Node adapter run on Bun's node:http compatibility layer.
+const bunFrameworks: readonly Framework[] = [
+  { name: 'fetch (no framework)', entry: 'apps/fetch-baseline.ts', fetchEntry: true },
+  { name: 'node:http', entry: 'apps/node-http.ts' },
+  { name: 'oleojs (export default)', entry: 'apps/oleojs-fetch.ts', fetchEntry: true },
+  { name: 'oleojs (oleojs/node)', entry: 'apps/oleojs.ts' },
   { name: 'express', entry: 'apps/express.ts' },
 ]
 
@@ -31,6 +46,7 @@ const { values: options } = parseArgs({
     duration: { type: 'string', default: '10' },
     warmup: { type: 'string', default: '3' },
     connections: { type: 'string', default: '100' },
+    runtime: { type: 'string', default: 'node' },
     scenario: { type: 'string', multiple: true },
   },
 })
@@ -38,20 +54,49 @@ const { values: options } = parseArgs({
 const duration = Number(options.duration)
 const warmup = Number(options.warmup)
 const connections = Number(options.connections)
+if (options.runtime !== 'node' && options.runtime !== 'bun') throw new Error(`Unknown runtime: ${options.runtime}`)
+const runtime: Runtime = options.runtime
+const frameworks = runtime === 'bun' ? bunFrameworks : nodeFrameworks
+// The runner and its load generator always run on Node.js; only the servers change runtime.
+const executable = runtime === 'bun' ? 'bun' : process.execPath
 const selected = options.scenario === undefined ? scenarios : scenarios.filter((scenario) => options.scenario?.includes(scenario.name))
 
+async function freePort(): Promise<number> {
+  const server = createServer().listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const { port } = server.address() as { port: number }
+  server.close()
+  await once(server, 'close')
+  return port
+}
+
+// Fetch-entry servers announce nothing, so wait until the port answers.
+async function listening(port: number): Promise<number> {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    try {
+      await (await fetch(`http://127.0.0.1:${port}/`)).arrayBuffer()
+      return port
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+  throw new Error(`Nothing answered on port ${port}`)
+}
+
 async function start(framework: Framework): Promise<{ child: ChildProcess; port: number }> {
-  const child = spawn(process.execPath, [framework.entry, ...(framework.args ?? [])], {
+  const assigned = framework.fetchEntry === true ? await freePort() : undefined
+  const child = spawn(executable, [framework.entry, ...(framework.args ?? [])], {
     cwd: import.meta.dirname,
-    env: { ...process.env, NODE_ENV: 'production' },
+    env: { ...process.env, NODE_ENV: 'production', PORT: String(assigned ?? 0) },
     stdio: ['ignore', 'pipe', 'inherit'],
   })
-  const lines = createInterface({ input: child.stdout! })
   const exited = once(child, 'exit').then(([code]) => {
     throw new Error(`${framework.name} exited with code ${code} before listening`)
   })
-  const announced = once(lines, 'line').then(([line]) => (JSON.parse(line as string) as { port: number }).port)
-  const port = await Promise.race([announced, exited])
+  const ready = assigned === undefined
+    ? once(createInterface({ input: child.stdout! }), 'line').then(([line]) => (JSON.parse(line as string) as { port: number }).port)
+    : listening(assigned)
+  const port = await Promise.race([ready, exited])
   return { child, port }
 }
 
@@ -100,7 +145,8 @@ function formatRow(cells: readonly string[]): string {
   return `| ${cells.join(' | ')} |`
 }
 
-console.log(`Node.js ${process.version}, ${connections} connections, ${warmup}s warmup + ${duration}s per run\n`)
+const version = runtime === 'bun' ? `Bun ${execFileSync('bun', ['--version'], { encoding: 'utf8' }).trim()}` : `Node.js ${process.version}`
+console.log(`${version} servers, load from Node.js ${process.version}, ${connections} connections, ${warmup}s warmup + ${duration}s per run\n`)
 
 for (const scenario of selected) {
   // A fresh process per framework and scenario keeps JIT state from one run out of the next.
