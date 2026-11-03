@@ -1,56 +1,98 @@
 # Runtimes
 
-Use `router<Env>(...)` to make application environment data available as `ctx.env` with the expected type. For a direct call, supply that data as the second argument to `app.fetch(request, env)`. When the handler needs an environment, `env` is a required argument, so omitting it is a type error rather than a runtime crash. A handler whose environment may be `undefined` keeps it optional. A hosting runtime may supply its own second argument, so its meaning depends on the integration.
-
-`toFetch` returns an object whose `fetch` function can be called independently of the object. The `{ fetch }` shape and `ExecutionContext` are oleojs conventions inspired by Workers, rather than WinterTC APIs.
-
-| Runtime | Application without env | Application with env |
-| --- | --- | --- |
-| Cloudflare Workers | `export default app` | `export default app` (Workers supplies `Env`) |
-| Deno | `Deno.serve(app.fetch)` | `Deno.serve((request) => app.fetch(request, env))` |
-| Bun | `export default app` | `Bun.serve({ fetch: (request) => app.fetch(request, env) })` |
-| Node.js | `createServer(toNodeListener(app))` | `createServer(toNodeListener(app, { env }))` |
-
-Deno and Bun pass their own server objects as the second argument, so an application that needs an environment must be wrapped. See the [runtime guide](/runtimes/) for `waitUntil` behavior, Node.js proxy and body handling, and background work on each runtime. Server configuration and lifecycle remain under application control.
-
-An oleojs application is a value with a `fetch` function:
+The same application runs everywhere. Write it once and export the result of `toFetch`:
 
 ```ts
 // app.ts
-import { router, toFetch } from 'oleojs'
-import { users } from './users.ts'
+import { get, router, toFetch } from 'oleojs'
 
-export interface Env {
-  db: Database
-}
-
-export default toFetch(router<Env>(users))
+export default toFetch(router(
+  get('/', () => new Response('Hello!')),
+))
 ```
 
-`app.fetch(request, env, executionCtx?)` follows the Cloudflare Workers call shape. This shape and `ExecutionContext` are oleojs conventions, not WinterTC APIs. The application code is the same everywhere. Each runtime differs only in what it passes as the second argument, and in whether it provides `waitUntil`.
+Each runtime only needs a few lines to serve it.
 
-| Runtime | Second argument passed by the runtime | Entry point for an app **without** env | Entry point for an app **with** env |
-| --- | --- | --- | --- |
-| Cloudflare Workers | your `Env` bindings | `export default app` | `export default app` |
-| Deno | `ServeHandlerInfo` | `Deno.serve(app.fetch)` | `Deno.serve((request) => app.fetch(request, env))` |
-| Bun | the `Server` | `export default app` | `Bun.serve({ fetch: (request) => app.fetch(request, env) })` |
-| Node.js | (adapter) | `toNodeListener(app)` | `toNodeListener(app, { env })` |
+## Cloudflare Workers
 
-When the application needs an environment, `app.fetch` and `toNodeListener` require it in their types. On Deno, `deno check` therefore rejects `Deno.serve(app.fetch)` for such an app, instead of letting `ctx.env` silently become the runtime's `ServeHandlerInfo`. Bun's `export default app` is not checked against the `fetch` signature, so on Bun an app that needs an environment must always use the explicit `Bun.serve` wrapper.
+```ts
+import app from './app.ts'
 
-## Entry point
+export default app
+```
 
-`toFetch(handler).fetch(request, ...args: FetchArgs<E>)` follows the Workers signature `(request, env, executionCtx?)`, and the returned object is directly usable as `export default`.
+Workers passes your bindings as the environment, so `router<Env>()` handlers can read them from `ctx.env`. `ctx.executionCtx.waitUntil(promise)` keeps the Worker alive for background work.
 
-- **`fetch` must not depend on `this`.** Runtimes may call it detached (for example `Deno.serve(app.fetch)`), so it is a closure, not a method that reads `this`.
+## Deno
 
-- **`env`:** whatever the runtime passes second becomes `ctx.env` (Workers `Env`, Bun `Server`, Deno `ServeHandlerInfo`).
-- **Required when needed:** `FetchArgs<E>` makes `env` optional only when `undefined` is assignable to `E` (including `unknown`). For `toFetch(router<Env>(…))`, `app.fetch(request)` is a type error. On Bun and Deno, which pass their own second argument, wrap an application that needs an environment: `Deno.serve((request) => app.fetch(request, env))`. The [runtime guide](/runtimes/) lists every runtime's entry point and `waitUntil` behavior.
-- **`executionCtx`:** when the runtime passes none, the stub is used.
-- **Testing:** `toFetch(app).fetch(new Request('http://test/users/1'))` works with no network and no adapter. `env` is `undefined` and `executionCtx` is the stub.
+```ts
+import app from './app.ts'
 
-## On every runtime
+Deno.serve(app.fetch)
+```
 
-- **Tests** need no runtime or adapter. Call `await app.fetch(new Request('https://test/users/1'), env)`.
-- **Body limits:** install `bodyLimit({ maxBytes })` inside `problemDetails()` on every runtime. Some hosts also enforce their own limits, but `bodyLimit` behaves the same everywhere.
-- **Background work:** only Workers extends a request with `waitUntil`. On Deno, Bun, and Node.js, keep track of background work you need to finish before shutdown.
+Or run `deno serve app.ts`.
+
+## Bun
+
+```ts
+import app from './app.ts'
+
+export default app
+```
+
+Run it with `bun app.ts`.
+
+## Node.js
+
+```ts
+import { createServer } from 'node:http'
+import { toNodeListener } from 'oleojs/node'
+import app from './app.ts'
+
+createServer(toNodeListener(app)).listen(3000)
+```
+
+`toNodeListener` works with `node:http`, `node:https`, and `node:http2`. You create, start, and stop the server yourself.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `env` | none | The application environment. Required when the application needs one |
+| `trustProxy` | `false` | Build the request URL from `X-Forwarded-Proto` and `X-Forwarded-Host`. Enable it only behind a proxy that sets these headers |
+| `lazyRequest` | `true` | Pass a request object that creates the native `Request` only when needed. Set `false` to always pass a native `Request` |
+
+The request object behaves like a `Request`, but two calls need a native one:
+
+- `new Request(request, init)`. Build the new request from its parts instead: `new Request(request.url, { method: request.method, headers, signal: request.signal })`.
+- `fetch(request)`, for example in a proxy. Use `fetch(request.clone())`.
+
+Alternatively, set `lazyRequest: false`.
+
+### FastResponse
+
+`FastResponse` from `oleojs/node` takes the same arguments as `Response`. The adapter writes it directly, with a `Content-Length` header:
+
+```ts
+import { FastResponse } from 'oleojs/node'
+
+get('/users/:id', (_request, ctx) => FastResponse.json({ id: ctx.params.id }))
+```
+
+Only the Node.js adapter recognizes it. Use `Response` in code that runs on other runtimes.
+
+## The application environment
+
+When handlers use `ctx.env` from [`router<Env>()`](/guide/middleware#the-application-environment), supply the environment on each runtime:
+
+| Runtime | With an environment |
+| --- | --- |
+| Cloudflare Workers | `export default app`: Workers supplies your bindings |
+| Deno | `Deno.serve((request) => app.fetch(request, env))` |
+| Bun | `Bun.serve({ fetch: (request) => app.fetch(request, env) })` |
+| Node.js | `toNodeListener(app, { env })` |
+
+Deno and Bun pass their own server information as the second argument of `fetch`, so wrap the call as shown instead of passing `app.fetch` directly.
+
+## Background work
+
+`ctx.executionCtx.waitUntil(promise)` extends the request only on Cloudflare Workers. On Deno, Bun, and Node.js the promise keeps running, and a rejection is reported with `console.error`, but the runtime does not wait for it.

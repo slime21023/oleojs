@@ -1,53 +1,44 @@
 # Getting started
 
-## Installation
+## Install
 
 ```sh
 npm install oleojs
 ```
 
-oleojs has no runtime dependencies. It runs on Cloudflare Workers, Deno, Bun, and Node.js 22 or later. Type inference is verified with TypeScript 7; older TypeScript versions are untested.
+oleojs runs on Cloudflare Workers, Deno, Bun, and Node.js 22 or later, and is tested with TypeScript 7.
 
 ::: warning Not yet published
-The package is not on npm yet (version `0.0.0`). Until the first release, build it from the repository with `bun run build` and depend on the local checkout.
+The package is not on npm yet. Until the first release, build it from the repository with `bun run build` and depend on the local checkout.
 :::
 
-## First application
+## Your first application
 
-Create an application in `app.ts`:
+<<< @/examples/getting-started.ts#app
 
-```ts
-import { get, group, router, toFetch } from 'oleojs'
+`get('/users/:id', handler)` matches `GET /users/42`, and `ctx.params.id` is `'42'`. The parameter name is typed from the pattern.
 
-const routes = router(
-  get('/health', () => new Response('ok')),
-  group('/users/:userId',
-    get('/posts/:postId', (_request, ctx) => Response.json({
-      userId: ctx.params.userId,
-      postId: ctx.params.postId,
-    })),
-  ),
-)
+`toFetch` turns the router into an object with a `fetch(request)` method, which is what every runtime calls.
 
-export default toFetch(routes)
-```
+## Run it
 
-The nested route matches `/users/42/posts/7`. Both parameter names are inferred from the patterns, including the group prefix.
+| Runtime | Command or code |
+| --- | --- |
+| Bun | `bun app.ts` |
+| Deno | `deno serve app.ts` |
+| Cloudflare Workers | `export default app` is already the Worker |
+| Node.js | `createServer(toNodeListener(app)).listen(3000)` |
 
-Call the application directly to exercise it without starting a server:
+See [Runtimes](/runtimes/) for details.
 
-```ts
-import app from './app.ts'
+## Test it
 
-const response = await app.fetch(
-  new Request('https://example.test/users/42/posts/7'),
-)
+`app.fetch` is a plain function, so tests need no server:
 
-console.log(await response.json()) // { userId: '42', postId: '7' }
-```
+<<< @/examples/getting-started.ts#test
 
 ## Next steps
 
-- [Routing](/guide/routing) and [route groups](/guide/groups) explain patterns, parameters, and prefixes.
-- [Middleware](/guide/middleware) shows how filters and context keys pass data through a request.
-- [Runtimes](/runtimes/) lists the entry point for each platform.
+- [Routing](/guide/routing): patterns, methods, and groups.
+- [Middleware](/guide/middleware): filters, shared values, and the application environment.
+- [Filters](/filters/): ready-made CORS, authentication, error, logging, and body-limit filters.

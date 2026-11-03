@@ -17,7 +17,7 @@ export default defineConfig({
       { text: 'Filters', link: '/filters/', activeMatch: '/filters/' },
       { text: 'Contracts', link: '/contracts/', activeMatch: '/contracts/' },
       { text: 'Runtimes', link: '/runtimes/', activeMatch: '/runtimes/' },
-      { text: 'Reference', link: '/reference/api', activeMatch: '/(reference|extending)/' },
+      { text: 'Reference', link: '/reference/api', activeMatch: '/reference/' },
       { text: 'Contributing', link: `${repository}/blob/main/CONTRIBUTING.md` },
     ],
     sidebar: [
@@ -27,8 +27,8 @@ export default defineConfig({
           { text: 'Introduction', link: '/guide/introduction' },
           { text: 'Getting started', link: '/guide/getting-started' },
           { text: 'Routing', link: '/guide/routing' },
-          { text: 'Route groups', link: '/guide/groups' },
-          { text: 'Middleware and context', link: '/guide/middleware' },
+          { text: 'Middleware', link: '/guide/middleware' },
+          { text: 'Runtimes', link: '/runtimes/' },
         ],
       },
       {
@@ -47,27 +47,15 @@ export default defineConfig({
         text: 'Contracts',
         items: [
           { text: 'Contracts', link: '/contracts/' },
-          { text: 'Input validation', link: '/contracts/validation' },
-          { text: 'OpenAPI generation', link: '/contracts/openapi' },
-        ],
-      },
-      {
-        text: 'Runtimes',
-        items: [
-          { text: 'Overview', link: '/runtimes/' },
-          { text: 'Cloudflare Workers', link: '/runtimes/workers' },
-          { text: 'Deno', link: '/runtimes/deno' },
-          { text: 'Bun', link: '/runtimes/bun' },
-          { text: 'Node.js', link: '/runtimes/node' },
+          { text: 'OpenAPI', link: '/contracts/openapi' },
         ],
       },
       {
         text: 'Reference',
         items: [
-          { text: 'API overview', link: '/reference/api' },
+          { text: 'API', link: '/reference/api' },
           { text: 'Routing rules', link: '/reference/routing' },
-          { text: 'HTTP semantics', link: '/reference/http-semantics' },
-          { text: 'Extension API', link: '/extending/' },
+          { text: 'Extension API', link: '/reference/extending' },
         ],
       },
     ],

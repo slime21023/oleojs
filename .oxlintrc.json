@@ -45,7 +45,7 @@
               },
               {
                 "group": ["../routing/*", "../http-method.ts"],
-                "message": "Extensions use routing only through the public API (inspectRoutes, withRouteCheck) so third parties can build the same (docs/extending/index.md)."
+                "message": "Extensions use routing only through the public API (inspectRoutes, withRouteCheck) so third parties can build the same (docs/reference/extending.md)."
               }
             ]
           }

@@ -15,19 +15,19 @@ Phases 1–4 are implemented, including the four original [standard filters](htt
 
 Read the [hard rules](#hard-rules) and [development workflow](#development-environment) before changing code. Use the [repository layout](#repository-layout) to locate implementations and tests.
 
-The public behavior contracts live on the documentation site, whose source is `docs/`: [Core API](https://slime21023.github.io/oleojs/reference/api) · [Routing](https://slime21023.github.io/oleojs/reference/routing) · [Route groups](https://slime21023.github.io/oleojs/guide/groups) · [HTTP semantics](https://slime21023.github.io/oleojs/reference/http-semantics) · [Node adapter](https://slime21023.github.io/oleojs/runtimes/node) · [Standard filters](https://slime21023.github.io/oleojs/filters/). A change to public behavior updates the matching page in the same commit.
+The [documentation site](https://slime21023.github.io/oleojs/), whose source is `docs/`, is a concise usage guide: what each API does, its options, and short examples. It does not describe implementation details or performance. Exact behavior is specified by the JSDoc in `src/` and by the tests. A change to public behavior updates its JSDoc and tests, and the matching page whenever usage, options, or observable results change. Page examples live in `docs/examples/` and are type-checked by `bun run typecheck`.
 
 ## Hard rules
 
 1. **Zero runtime dependencies.** Dev dependencies are allowed.
 2. **Portable packages use only ECMA-262 and ECMA-429 APIs.** See [Standards conformance](#standards-conformance).
-3. **Never wrap, proxy, subclass, or mutate `Request` or `Response`.** Build responses with `new Response()` or `Response.json()`. The one exception is `oleojs/node`'s fast paths ([Performance](https://slime21023.github.io/oleojs/runtimes/node#performance)): the lightweight request it passes by default (`lazyRequest: false` turns it off) and the `FastResponse` that applications import explicitly. Both are stand-ins that inherit from the native prototype and build the native object on first use of any other member. They live only in the adapter, the core never creates them, and their limits are documented. Portable code, including filters, never depends on receiving native objects: build a new request from `url`, `method`, `headers`, and `signal` rather than with `new Request(request, init)`.
+3. **Never wrap, proxy, subclass, or mutate `Request` or `Response`.** Build responses with `new Response()` or `Response.json()`. The one exception is `oleojs/node`'s fast paths ([Node.js](https://slime21023.github.io/oleojs/runtimes/#node-js)): the lightweight request it passes by default (`lazyRequest: false` turns it off) and the `FastResponse` that applications import explicitly. Both are stand-ins that inherit from the native prototype and build the native object on first use of any other member. They live only in the adapter, the core never creates them, and their limits are documented. Portable code, including filters, never depends on receiving native objects: build a new request from `url`, `method`, `headers`, and `signal` rather than with `new Request(request, init)`.
 4. **`Context` holds data only.** Never add helper methods (`ctx.json()`, `ctx.text()`, …) to it.
 5. **Routing hot path:** no `new URL()`, `split()`, regex, or substring allocation for static comparison. See [Performance budget](#performance-budget).
 6. **Route definition errors throw when `router()` is called**, never at request time.
 7. **Do not present oleojs conventions as standards.** The `{ fetch }` entry shape and `ExecutionContext` are not WinterTC APIs.
 8. **Keep the public surface small.** An entry point exports a value or type only if applications or extension authors write it themselves; see [Package manifest](#package-manifest).
-9. **Extensions use only the public routing API.** `src/filters/` and `src/contract/` never import `src/routing/*` or `src/http-method.ts`; see [Extension API](https://slime21023.github.io/oleojs/extending/).
+9. **Extensions use only the public routing API.** `src/filters/` and `src/contract/` never import `src/routing/*` or `src/http-method.ts`; see [Extension API](https://slime21023.github.io/oleojs/reference/extending).
 
 ## Development environment
 
@@ -225,7 +225,7 @@ Keep these mechanisms intact:
 | Defaulted `TB` in `routesFor` and `contractFor` helpers | Inline routes still infer enclosing parameters from context; separately declared ones fall back to the bound `TBase` |
 | Fixed base in the bound `group` | An inferred base has no source outside a group, which also loses the prefix parameters of inline routes; fixing it to `TBase` keeps standalone groups typed |
 
-Phantom members are type-level only and are never set at runtime. The optional filter phantom keeps ordinary arrow functions assignable as filters. See [route groups](https://slime21023.github.io/oleojs/guide/groups) for usage patterns.
+Phantom members are type-level only and are never set at runtime. The optional filter phantom keeps ordinary arrow functions assignable as filters. See [Routing](https://slime21023.github.io/oleojs/guide/routing#groups) for usage patterns.
 
 ### Property-based tests
 
