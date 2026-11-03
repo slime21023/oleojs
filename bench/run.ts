@@ -14,7 +14,8 @@ interface Framework {
   readonly fetchEntry?: boolean
 }
 
-type Runtime = 'node' | 'bun'
+const RUNTIMES = ['node', 'bun', 'deno'] as const
+type Runtime = (typeof RUNTIMES)[number]
 
 interface Measurement {
   readonly requestsPerSecond: number
@@ -31,12 +32,12 @@ const nodeFrameworks: readonly Framework[] = [
   { name: 'express', entry: 'apps/express.ts' },
 ]
 
-// On Bun, oleojs runs through its documented `export default app` entry; Express and the
-// Node adapter run on Bun's node:http compatibility layer.
-const bunFrameworks: readonly Framework[] = [
+// On Bun and Deno, oleojs runs through the runtime's fetch entry (Bun's `export default app`,
+// `deno serve`); Express and the Node adapter run on the runtime's node:http compatibility layer.
+const fetchRuntimeFrameworks: readonly Framework[] = [
   { name: 'fetch (no framework)', entry: 'apps/fetch-baseline.ts', fetchEntry: true },
   { name: 'node:http', entry: 'apps/node-http.ts' },
-  { name: 'oleojs (export default)', entry: 'apps/oleojs-fetch.ts', fetchEntry: true },
+  { name: 'oleojs (fetch entry)', entry: 'apps/oleojs-fetch.ts', fetchEntry: true },
   { name: 'oleojs (oleojs/node)', entry: 'apps/oleojs.ts' },
   { name: 'express', entry: 'apps/express.ts' },
 ]
@@ -54,11 +55,33 @@ const { values: options } = parseArgs({
 const duration = Number(options.duration)
 const warmup = Number(options.warmup)
 const connections = Number(options.connections)
-if (options.runtime !== 'node' && options.runtime !== 'bun') throw new Error(`Unknown runtime: ${options.runtime}`)
-const runtime: Runtime = options.runtime
-const frameworks = runtime === 'bun' ? bunFrameworks : nodeFrameworks
+const requested = RUNTIMES.find((name) => name === options.runtime)
+if (requested === undefined) throw new Error(`Unknown runtime: ${options.runtime}`)
+// A separate constant keeps the narrowed type inside the functions below.
+const runtime: Runtime = requested
+const frameworks = runtime === 'node' ? nodeFrameworks : fetchRuntimeFrameworks
+
 // The runner and its load generator always run on Node.js; only the servers change runtime.
-const executable = runtime === 'bun' ? 'bun' : process.execPath
+function command(framework: Framework, port: number | undefined): [string, string[]] {
+  const args = [framework.entry, ...(framework.args ?? [])]
+  switch (runtime) {
+    case 'node':
+      return [process.execPath, args]
+    case 'bun':
+      return ['bun', args]
+    case 'deno':
+      return framework.fetchEntry === true
+        ? ['deno', ['serve', '--quiet', '--allow-env=PORT', '--host', '127.0.0.1', '--port', String(port), ...args]]
+        : ['deno', ['run', '--quiet', '--allow-all', ...args]]
+  }
+}
+
+function runtimeVersion(): string {
+  if (runtime === 'node') return `Node.js ${process.version}`
+  const output = execFileSync(runtime, ['--version'], { encoding: 'utf8' })
+  // Deno prints one line per component; the first is its own version.
+  return runtime === 'bun' ? `Bun ${output.trim()}` : output.split(/\r?\n/)[0]!.replace('deno', 'Deno')
+}
 const selected = options.scenario === undefined ? scenarios : scenarios.filter((scenario) => options.scenario?.includes(scenario.name))
 
 async function freePort(): Promise<number> {
@@ -85,7 +108,8 @@ async function listening(port: number): Promise<number> {
 
 async function start(framework: Framework): Promise<{ child: ChildProcess; port: number }> {
   const assigned = framework.fetchEntry === true ? await freePort() : undefined
-  const child = spawn(executable, [framework.entry, ...(framework.args ?? [])], {
+  const [executable, args] = command(framework, assigned)
+  const child = spawn(executable, args, {
     cwd: import.meta.dirname,
     env: { ...process.env, NODE_ENV: 'production', PORT: String(assigned ?? 0) },
     stdio: ['ignore', 'pipe', 'inherit'],
@@ -145,8 +169,7 @@ function formatRow(cells: readonly string[]): string {
   return `| ${cells.join(' | ')} |`
 }
 
-const version = runtime === 'bun' ? `Bun ${execFileSync('bun', ['--version'], { encoding: 'utf8' }).trim()}` : `Node.js ${process.version}`
-console.log(`${version} servers, load from Node.js ${process.version}, ${connections} connections, ${warmup}s warmup + ${duration}s per run\n`)
+console.log(`${runtimeVersion()} servers, load from Node.js ${process.version}, ${connections} connections, ${warmup}s warmup + ${duration}s per run\n`)
 
 for (const scenario of selected) {
   // A fresh process per framework and scenario keeps JIT state from one run out of the next.
